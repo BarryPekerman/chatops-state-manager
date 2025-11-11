@@ -76,7 +76,7 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           role-session-name: telegram-ops-session
 
-      - name: Fetch callback URL from Secrets Manager
+      - name: Fetch callback URL and API key from Secrets Manager
         id: callback
         run: |
           set -euo pipefail
@@ -88,9 +88,9 @@ jobs:
             CHATOPS_SECRETS_REGION="$PROJECT_REGISTRY_REGION"
           fi
           
-          # Fetch ChatOps secrets secret (contains callback_url)
+          # Fetch ChatOps secrets secret (contains callback_url and callback_key)
           CHATOPS_SECRETS_NAME="chatops/secrets"
-          echo "Fetching callback URL from: $CHATOPS_SECRETS_NAME (region: $CHATOPS_SECRETS_REGION)"
+          echo "Fetching callback URL and API key from: $CHATOPS_SECRETS_NAME (region: $CHATOPS_SECRETS_REGION)"
           
           SECRETS_JSON=$(timeout 10 aws secretsmanager get-secret-value \
             --secret-id "$CHATOPS_SECRETS_NAME" \
@@ -105,8 +105,24 @@ jobs:
             CALLBACK_URL="${{ secrets.CALLBACK_URL }}"
           fi
           
+          # Extract callback_key (try multiple possible keys)
+          CALLBACK_KEY=$(echo "$SECRETS_JSON" | jq -r '.callback_key // .ai_processor_api_key // .api_gateway_key // empty')
+          
+          if [[ -z "$CALLBACK_KEY" ]] || [[ "$CALLBACK_KEY" == "null" ]]; then
+            echo "Warning: callback_key not found in ChatOps secrets. Falling back to GitHub secret." >&2
+            CALLBACK_KEY="${{ secrets.CALLBACK_KEY }}"
+          fi
+          
+          if [[ -z "$CALLBACK_KEY" ]] || [[ "$CALLBACK_KEY" == "null" ]]; then
+            echo "Error: CALLBACK_KEY not found in Secrets Manager or GitHub secrets!" >&2
+            echo "The API Gateway requires an API key for authentication." >&2
+            exit 1
+          fi
+          
           echo "callback-url=$CALLBACK_URL" >> $GITHUB_OUTPUT
+          echo "callback-key=$CALLBACK_KEY" >> $GITHUB_OUTPUT
           echo "Using callback URL: ${CALLBACK_URL:0:50}..." # Show first 50 chars for debugging
+          echo "API key found: ${CALLBACK_KEY:0:5}..." # Show first 5 chars for debugging
 
       - name: Fetch project registry
         id: registry
@@ -175,7 +191,7 @@ jobs:
             --arg raw_output "$PROJECT_LIST" \
             '{callback: true, chat_id: $chat_id, command: $command, raw_output: $raw_output}')
           curl -sS -X POST "${{ steps.callback.outputs.callback-url }}" \
-            -H "x-api-key: ${{ secrets.CALLBACK_KEY }}" \
+            -H "x-api-key: ${{ steps.callback.outputs.callback-key }}" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD" || true
 
@@ -315,7 +331,7 @@ jobs:
             --arg raw_output "$STATUS_OUTPUT" \
             '{callback:true, chat_id:$chat_id, command:$command, project:$project, raw_output:$raw_output}')
           curl -sS -X POST "${{ steps.callback.outputs.callback-url }}" \
-            -H "x-api-key: ${{ secrets.CALLBACK_KEY }}" \
+            -H "x-api-key: ${{ steps.callback.outputs.callback-key }}" \
             -H "Content-Type: application/json" \
             -d "$JSON_PAYLOAD" || true
 
@@ -341,7 +357,7 @@ jobs:
             --arg raw_output "$DESTROY_OUTPUT" \
             '{callback:true, chat_id:$chat_id, command:$command, project:$project, run_id:$run_id, raw_output:$raw_output}')
           curl -sS -X POST "${{ steps.callback.outputs.callback-url }}" \
-            -H "x-api-key: ${{ secrets.CALLBACK_KEY }}" \
+            -H "x-api-key: ${{ steps.callback.outputs.callback-key }}" \
             -H "Content-Type: application/json" \
             -d "$JSON_PAYLOAD" || true
 
@@ -391,6 +407,6 @@ jobs:
             --arg raw_output "$DESTROY_OUTPUT" \
             '{callback:true, chat_id:$chat_id, command:$command, project:$project, run_id:$run_id, raw_output:$raw_output}')
           curl -sS -X POST "${{ steps.callback.outputs.callback-url }}" \
-            -H "x-api-key: ${{ secrets.CALLBACK_KEY }}" \
+            -H "x-api-key: ${{ steps.callback.outputs.callback-key }}" \
             -H "Content-Type: application/json" \
             -d "$JSON_PAYLOAD" || true
