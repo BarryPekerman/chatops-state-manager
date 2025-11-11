@@ -1,0 +1,396 @@
+name: Telegram ChatOps - Terraform Manager
+
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: "Command to run (status | destroy | confirm_destroy)"
+        required: true
+        default: status
+      confirmation_token:
+        description: "Token for confirm_destroy (if applicable)"
+        required: false
+  repository_dispatch:
+    types: [telegram_command]
+
+permissions:
+  contents: read
+  id-token: write
+  actions: read
+
+env:
+  # Project registry secret name - defaults to 'chatops/project-registry'
+  # Format: The registry should contain JSON with projects object:
+  # Example: {"projects":{"project1":{"backend_bucket":"...","backend_key":"...","region":"...","workspace":"..."}}}
+  # All projects are stored in this single registry secret
+  PROJECT_REGISTRY_SECRET_NAME: ${{ vars.PROJECT_REGISTRY_SECRET_NAME || 'chatops/project-registry' }}
+  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  run:
+    name: Run ChatOps Command
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Derive command, token, and project from event
+        id: derive
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            COMMAND="${{ inputs.command }}"
+            TOKEN="${{ inputs.confirmation_token }}"
+            PROJECT="${{ inputs.project || '' }}"
+          else
+            COMMAND="${{ github.event.client_payload.command }}"
+            TOKEN="${{ github.event.client_payload.token }}"
+            PROJECT="${{ github.event.client_payload.project || '' }}"
+          fi
+          echo "command=$COMMAND" >> $GITHUB_OUTPUT
+          echo "token=$TOKEN" >> $GITHUB_OUTPUT
+          echo "project=$PROJECT" >> $GITHUB_OUTPUT
+          
+          # Normalize command names
+          if [[ "$COMMAND" == "projects" ]] || [[ "$COMMAND" == "/projects" ]]; then
+            echo "command=list_projects" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.3
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials via OIDC
+        if: ${{ env.AWS_REGION != '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          role-session-name: telegram-ops-session
+
+      - name: Fetch callback URL from Secrets Manager
+        id: callback
+        run: |
+          set -euo pipefail
+          
+          # Determine region for ChatOps secrets (same as project registry region)
+          if [[ -z "${PROJECT_REGISTRY_REGION:-}" ]] || [[ "${PROJECT_REGISTRY_REGION}" == "***" ]]; then
+            CHATOPS_SECRETS_REGION="${AWS_REGION:-eu-west-1}"
+          else
+            CHATOPS_SECRETS_REGION="$PROJECT_REGISTRY_REGION"
+          fi
+          
+          # Fetch ChatOps secrets secret (contains callback_url)
+          CHATOPS_SECRETS_NAME="chatops/secrets"
+          echo "Fetching callback URL from: $CHATOPS_SECRETS_NAME (region: $CHATOPS_SECRETS_REGION)"
+          
+          SECRETS_JSON=$(timeout 10 aws secretsmanager get-secret-value \
+            --secret-id "$CHATOPS_SECRETS_NAME" \
+            --region "$CHATOPS_SECRETS_REGION" \
+            --query 'SecretString' --output text 2>&1 || echo '{}')
+          
+          # Extract callback_url
+          CALLBACK_URL=$(echo "$SECRETS_JSON" | jq -r '.callback_url // empty')
+          
+          if [[ -z "$CALLBACK_URL" ]] || [[ "$CALLBACK_URL" == "null" ]]; then
+            echo "Warning: callback_url not found in ChatOps secrets. Falling back to GitHub secret." >&2
+            CALLBACK_URL="${{ secrets.CALLBACK_URL }}"
+          fi
+          
+          echo "callback-url=$CALLBACK_URL" >> $GITHUB_OUTPUT
+          echo "Using callback URL: ${CALLBACK_URL:0:50}..." # Show first 50 chars for debugging
+
+      - name: Fetch project registry
+        id: registry
+        run: |
+          set -euo pipefail
+          
+          # Always fetch project registry
+          PROJECT_REGISTRY_SECRET="${PROJECT_REGISTRY_SECRET_NAME:-chatops/project-registry}"
+          
+          echo "Fetching project registry from: $PROJECT_REGISTRY_SECRET"
+          
+          REGISTRY_JSON=$(aws secretsmanager get-secret-value \
+            --secret-id "$PROJECT_REGISTRY_SECRET" \
+            --query 'SecretString' --output text 2>/dev/null || echo "")
+          
+          if [[ -z "$REGISTRY_JSON" ]]; then
+            echo "Error: Project registry not found: $PROJECT_REGISTRY_SECRET" >&2
+            echo "Please ensure the project registry secret exists and contains at least one project." >&2
+            exit 1
+          fi
+          
+          # Store registry JSON for later use
+          echo "$REGISTRY_JSON" > /tmp/registry.json
+          
+          # List all projects
+          PROJECT_COUNT=$(echo "$REGISTRY_JSON" | jq -r '.projects | length')
+          PROJECT_NAMES=$(echo "$REGISTRY_JSON" | jq -r '.projects | keys[]' 2>/dev/null || echo "")
+          
+          echo "Found $PROJECT_COUNT project(s) in registry"
+          if [[ -n "$PROJECT_NAMES" ]]; then
+            echo "Available projects:"
+            echo "$PROJECT_NAMES" | sed 's/^/  - /'
+          fi
+
+      - name: List projects command
+        if: ${{ steps.derive.outputs.command == 'list_projects' }}
+        run: |
+          set -euo pipefail
+          
+          # Load registry
+          REGISTRY_JSON=$(cat /tmp/registry.json)
+          
+          # Extract all projects
+          PROJECT_COUNT=$(echo "$REGISTRY_JSON" | jq -r '.projects | length')
+          
+          if [[ "$PROJECT_COUNT" -eq 0 ]]; then
+            PROJECT_LIST="No projects registered in registry.\n\nTo add a project, use the terraform-chatops-helper script:\n  ./scripts/terraform-chatops-helper register ./terraform-config <project-name>"
+          else
+            PROJECT_LIST="Registered Projects ($PROJECT_COUNT):\n\n"
+            while IFS= read -r project_name; do
+              PROJECT_CONFIG=$(echo "$REGISTRY_JSON" | jq -r ".projects.\"$project_name\"")
+              ENABLED=$(echo "$PROJECT_CONFIG" | jq -r '.enabled // true')
+              STATUS=$([ "$ENABLED" == "true" ] && echo "✓ Enabled" || echo "✗ Disabled")
+              BUCKET=$(echo "$PROJECT_CONFIG" | jq -r '.backend_bucket // .bucket // "N/A"')
+              KEY=$(echo "$PROJECT_CONFIG" | jq -r '.backend_key // .key // "N/A"')
+              WORKSPACE=$(echo "$PROJECT_CONFIG" | jq -r '.workspace // "default"')
+              
+              PROJECT_LIST="${PROJECT_LIST}• $project_name ($STATUS)\n  Bucket: $BUCKET\n  Key: $KEY\n  Workspace: $WORKSPACE\n\n"
+            done <<< "$(echo "$REGISTRY_JSON" | jq -r '.projects | keys[]')"
+          fi
+          
+          # Send callback to API Gateway
+          PAYLOAD=$(jq -n \
+            --arg chat_id "${{ env.TELEGRAM_CHAT_ID }}" \
+            --arg command "list_projects" \
+            --arg raw_output "$PROJECT_LIST" \
+            '{callback: true, chat_id: $chat_id, command: $command, raw_output: $raw_output}')
+          curl -sS -X POST "${{ steps.callback.outputs.callback-url }}" \
+            -H "x-api-key: ${{ secrets.CALLBACK_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" || true
+
+      - name: Select project
+        id: project
+        if: ${{ steps.derive.outputs.command != 'list_projects' }}
+        run: |
+          set -euo pipefail
+          
+          # Load registry
+          REGISTRY_JSON=$(cat /tmp/registry.json)
+          
+          # Get project from command or use default
+          PROJECT_FROM_CMD="${{ steps.derive.outputs.project }}"
+          
+          if [[ -n "$PROJECT_FROM_CMD" ]]; then
+            PROJECT="$PROJECT_FROM_CMD"
+            echo "Using project from command: $PROJECT"
+          else
+            # No project specified - check if only one project exists
+            PROJECT_COUNT=$(echo "$REGISTRY_JSON" | jq -r '.projects | length')
+            
+            if [[ "$PROJECT_COUNT" -eq 0 ]]; then
+              echo "Error: No projects found in registry. Please add at least one project." >&2
+              exit 1
+            elif [[ "$PROJECT_COUNT" -eq 1 ]]; then
+              # Only one project - use it as default
+              PROJECT=$(echo "$REGISTRY_JSON" | jq -r '.projects | keys[0]')
+              echo "No project specified - using only project in registry: $PROJECT"
+            else
+              # Multiple projects - error
+              echo "Error: Multiple projects in registry but no project specified." >&2
+              echo "Available projects:" >&2
+              echo "$REGISTRY_JSON" | jq -r '.projects | keys[]' | sed 's/^/  - /' >&2
+              echo "Please specify a project: /status <project> or /destroy <project>" >&2
+              exit 1
+            fi
+          fi
+          
+          # Extract project config from registry
+          PROJECT_CONFIG=$(echo "$REGISTRY_JSON" | jq -r ".projects.\"$PROJECT\" // empty")
+          
+          if [[ -z "$PROJECT_CONFIG" || "$PROJECT_CONFIG" == "null" ]]; then
+            echo "Error: Project '$PROJECT' not found in registry" >&2
+            echo "Available projects:" >&2
+            echo "$REGISTRY_JSON" | jq -r '.projects | keys[]' | sed 's/^/  - /' >&2
+            exit 1
+          fi
+          
+          # Check if project is enabled
+          ENABLED=$(echo "$PROJECT_CONFIG" | jq -r '.enabled // true')
+          if [[ "$ENABLED" != "true" ]]; then
+            echo "Error: Project '$PROJECT' is disabled" >&2
+            exit 1
+          fi
+          
+          # Extract backend config from project
+          BUCKET=$(echo "$PROJECT_CONFIG" | jq -r '.backend_bucket // .bucket // empty')
+          KEY=$(echo "$PROJECT_CONFIG" | jq -r '.backend_key // .key // empty')
+          REGION=$(echo "$PROJECT_CONFIG" | jq -r '.region // empty')
+          WORKSPACE=$(echo "$PROJECT_CONFIG" | jq -r '.workspace // "default"')
+          
+          # Validate required fields
+          if [[ -z "$BUCKET" || -z "$KEY" || -z "$REGION" ]]; then
+            echo "Error: Project '$PROJECT' missing required fields (backend_bucket, backend_key, region)" >&2
+            exit 1
+          fi
+          
+          # Set output variables
+          echo "project-selected=$PROJECT" >> $GITHUB_OUTPUT
+          echo "project-bucket=$BUCKET" >> $GITHUB_OUTPUT
+          echo "project-key=$KEY" >> $GITHUB_OUTPUT
+          echo "project-region=$REGION" >> $GITHUB_OUTPUT
+          echo "project-workspace=$WORKSPACE" >> $GITHUB_OUTPUT
+          echo "base_key=$KEY" >> $GITHUB_OUTPUT
+          
+          echo "Selected Project: $PROJECT"
+          echo "Backend Configuration:"
+          echo "  Bucket: $BUCKET"
+          echo "  Key: $KEY"
+          echo "  Region: $REGION"
+          echo "  Workspace: $WORKSPACE"
+          echo "Terraform will use state path: env:/$WORKSPACE/$KEY"
+
+      - name: Terraform init
+        id: init
+        if: ${{ steps.derive.outputs.command != 'list_projects' }}
+        run: |
+          cd terraform-config || { echo "terraform-config directory not found, creating it"; mkdir -p terraform-config; }
+          # Use project region for S3 access
+          export AWS_REGION="${{ steps.project.outputs.project-region }}"
+          export AWS_DEFAULT_REGION="${{ steps.project.outputs.project-region }}"
+          # Use base_key (without workspace prefix) for terraform init
+          # Terraform will automatically prepend env:/<workspace>/ when workspace is selected
+          BACKEND_KEY="${{ steps.project.outputs.project-key }}"
+          terraform init \
+            -backend-config="bucket=${{ steps.project.outputs.project-bucket }}" \
+            -backend-config="key=$BACKEND_KEY" \
+            -backend-config="region=${{ steps.project.outputs.project-region }}"
+          
+          # Select workspace from project config (always set, defaults to "default")
+          # Terraform will automatically use env:/<workspace>/<base_key> when workspace is selected
+          WORKSPACE="${{ steps.project.outputs.project-workspace }}"
+          if [[ -n "$WORKSPACE" ]]; then
+            echo "Selecting workspace: $WORKSPACE"
+            terraform workspace select "$WORKSPACE" 2>/dev/null || terraform workspace new "$WORKSPACE"
+            echo "Selected workspace: $WORKSPACE"
+            echo "Terraform will use state path: env:/$WORKSPACE/$BACKEND_KEY"
+          else
+            echo "Using default workspace"
+            echo "Terraform will use state path: $BACKEND_KEY"
+          fi
+          echo "workspace=$WORKSPACE" >> $GITHUB_OUTPUT
+
+      - name: Run status command
+        if: ${{ steps.derive.outputs.command == 'status' }}
+        run: |
+          cd terraform-config
+          export AWS_REGION="${{ steps.project.outputs.project-region }}"
+          export AWS_DEFAULT_REGION="${{ steps.project.outputs.project-region }}"
+          # Select workspace again (GitHub Actions steps run in separate shells)
+          if [[ -n "${{ steps.init.outputs.workspace }}" ]]; then
+            echo "Selecting workspace: ${{ steps.init.outputs.workspace }}"
+            terraform workspace select "${{ steps.init.outputs.workspace }}" 2>/dev/null || echo "Workspace already selected or not found"
+          fi
+          echo "Project: ${{ steps.project.outputs.project-selected }}"
+          STATUS_OUTPUT=$(terraform state list 2>/dev/null || echo "Error: Could not read Terraform state")
+          # If state list is empty, show a friendly message
+          if [[ -z "$STATUS_OUTPUT" ]]; then
+            STATUS_OUTPUT="The state file is empty. No resources are represented."
+          fi
+          # Send raw output to Lambda - let Lambda handle formatting
+          JSON_PAYLOAD=$(jq -n \
+            --arg chat_id "${{ env.TELEGRAM_CHAT_ID }}" \
+            --arg command "status" \
+            --arg project "${{ steps.project.outputs.project-selected }}" \
+            --arg raw_output "$STATUS_OUTPUT" \
+            '{callback:true, chat_id:$chat_id, command:$command, project:$project, raw_output:$raw_output}')
+          curl -sS -X POST "${{ steps.callback.outputs.callback-url }}" \
+            -H "x-api-key: ${{ secrets.CALLBACK_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d "$JSON_PAYLOAD" || true
+
+      - name: Run destroy command
+        if: ${{ steps.derive.outputs.command == 'destroy' }}
+        run: |
+          cd terraform-config
+          export AWS_REGION="${{ steps.project.outputs.project-region }}"
+          export AWS_DEFAULT_REGION="${{ steps.project.outputs.project-region }}"
+          # Select workspace again (GitHub Actions steps run in separate shells)
+          if [[ -n "${{ steps.init.outputs.workspace }}" ]]; then
+            echo "Selecting workspace: ${{ steps.init.outputs.workspace }}"
+            terraform workspace select "${{ steps.init.outputs.workspace }}" 2>/dev/null || echo "Workspace already selected or not found"
+          fi
+          echo "Project: ${{ steps.project.outputs.project-selected }}"
+          DESTROY_OUTPUT=$(terraform plan -destroy -no-color 2>&1 || echo "Destroy plan failed")
+          # Send raw output to Lambda - let Lambda handle formatting and storage
+          JSON_PAYLOAD=$(jq -n \
+            --arg chat_id "${{ env.TELEGRAM_CHAT_ID }}" \
+            --arg command "destroy" \
+            --arg project "${{ steps.project.outputs.project-selected }}" \
+            --arg run_id "${{ github.run_id }}" \
+            --arg raw_output "$DESTROY_OUTPUT" \
+            '{callback:true, chat_id:$chat_id, command:$command, project:$project, run_id:$run_id, raw_output:$raw_output}')
+          curl -sS -X POST "${{ steps.callback.outputs.callback-url }}" \
+            -H "x-api-key: ${{ secrets.CALLBACK_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d "$JSON_PAYLOAD" || true
+
+      - name: Run confirm_destroy command
+        if: ${{ steps.derive.outputs.command == 'confirm_destroy' }}
+        run: |
+          cd terraform-config
+          export AWS_REGION="${{ steps.project.outputs.project-region }}"
+          export AWS_DEFAULT_REGION="${{ steps.project.outputs.project-region }}"
+          
+          echo "Project: ${{ steps.project.outputs.project-selected }}"
+          
+          # Select workspace again (GitHub Actions steps run in separate shells)
+          WORKSPACE_TO_USE="${{ steps.init.outputs.workspace }}"
+          if [[ -z "$WORKSPACE_TO_USE" ]]; then
+            WORKSPACE_TO_USE="${{ steps.project.outputs.project-workspace }}"
+          fi
+          
+          if [[ -n "$WORKSPACE_TO_USE" ]]; then
+            echo "Selecting workspace: $WORKSPACE_TO_USE"
+            terraform workspace select "$WORKSPACE_TO_USE" 2>/dev/null || terraform workspace new "$WORKSPACE_TO_USE"
+            echo "Current workspace after selection: $(terraform workspace show)"
+          else
+            echo "Warning: No workspace found in outputs, using default"
+            echo "Current workspace: $(terraform workspace show)"
+          fi
+          
+          # Execute terraform apply for destroy
+          # Use || true to ensure step doesn't fail if terraform exits non-zero
+          set +e  # Temporarily disable exit on error
+          DESTROY_OUTPUT=$(terraform apply -destroy -auto-approve -no-color 2>&1)
+          DESTROY_EXIT_CODE=$?
+          set -e  # Re-enable exit on error
+          # Always show the output for debugging
+          echo "=== Destroy Output (exit code: $DESTROY_EXIT_CODE) ==="
+          echo "$DESTROY_OUTPUT"
+          echo "=== End Destroy Output ==="
+          # Log if destroy failed, but don't fail the step
+          if [[ $DESTROY_EXIT_CODE -ne 0 ]]; then
+            echo "Warning: Destroy exited with code $DESTROY_EXIT_CODE (this is expected if no resources exist)"
+          fi
+          JSON_PAYLOAD=$(jq -n \
+            --arg chat_id "${{ env.TELEGRAM_CHAT_ID }}" \
+            --arg command "confirm_destroy" \
+            --arg project "${{ steps.project.outputs.project-selected }}" \
+            --arg run_id "${{ steps.derive.outputs.token || github.run_id }}" \
+            --arg raw_output "$DESTROY_OUTPUT" \
+            '{callback:true, chat_id:$chat_id, command:$command, project:$project, run_id:$run_id, raw_output:$raw_output}')
+          curl -sS -X POST "${{ steps.callback.outputs.callback-url }}" \
+            -H "x-api-key: ${{ secrets.CALLBACK_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d "$JSON_PAYLOAD" || true
