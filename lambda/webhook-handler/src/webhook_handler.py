@@ -252,15 +252,30 @@ def trigger_github_workflow(command, chat_id, project=None, token=None):
         if not all([github_token, github_owner, github_repo]):
             raise ValueError("Missing GitHub configuration")
 
+        # Ensure project is a simple value (string or None) to avoid recursion issues
+        # Safely convert project to string, handling potential recursion errors
+        if project is None:
+            project_value = None
+        elif isinstance(project, str):
+            project_value = project
+        else:
+            try:
+                project_value = str(project)
+            except RecursionError:
+                # If recursion occurs, use a safe fallback
+                project_value = f"<{type(project).__name__}>"
+            except Exception:
+                project_value = None
+        
         payload = {
             'event_type': 'telegram_command',
             'client_payload': {'command': command}
         }
         
-        if project:
-            payload['client_payload']['project'] = project
+        if project_value:
+            payload['client_payload']['project'] = project_value
         if token:
-            payload['client_payload']['token'] = token
+            payload['client_payload']['token'] = str(token) if token is not None else None
 
         url = f"https://api.github.com/repos/{github_owner}/{github_repo}/dispatches"
         headers = {
@@ -272,20 +287,28 @@ def trigger_github_workflow(command, chat_id, project=None, token=None):
         response = requests.post(url, headers=headers, json=payload)
         response.raise_for_status()
 
-        logger.info(f"Successfully triggered GitHub workflow for command: {command}, project: {project}")
-        send_telegram_feedback(chat_id, command, project)
+        logger.info(f"Successfully triggered GitHub workflow for command: {command}, project: {project_value}")
+        send_telegram_feedback(chat_id, command, project_value)
 
         return create_response(200, {
             'message': f'Command {command} triggered successfully',
             'command': command,
-            'project': project
+            'project': project_value
         })
 
     except requests.exceptions.RequestException as e:
-        logger.error(f"GitHub API error: {str(e)}")
+        error_msg = str(e) if e else 'Unknown error'
+        logger.error(f"GitHub API error: {error_msg}")
         return create_response(500, {'error': 'Failed to trigger GitHub workflow'})
     except Exception as e:
-        logger.error(f"Error triggering workflow: {str(e)}")
+        # Safely convert exception to string to avoid recursion issues
+        try:
+            error_msg = str(e) if e else 'Unknown error'
+        except RecursionError:
+            error_msg = f"Error type: {type(e).__name__}"
+        except Exception:
+            error_msg = 'Internal error (failed to format exception)'
+        logger.error(f"Error triggering workflow: {error_msg}")
         return create_response(500, {'error': 'Internal error'})
 
 def send_telegram_feedback(chat_id, command, project=None):
