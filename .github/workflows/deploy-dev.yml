@@ -1,14 +1,21 @@
 name: Deploy to Dev
 
 on:
-  push:
+  # Trigger after Lambda CI/CD completes successfully
+  workflow_run:
+    workflows: ["Lambda CI/CD"]
+    types:
+      - completed
     branches:
       - dev
-    paths:
-      - 'lambda/**'
-      - 'terraform/**'
-      - '.github/workflows/deploy-dev.yml'
-  workflow_dispatch:  # Allow manual triggers
+  # Allow manual triggers
+  workflow_dispatch:
+    inputs:
+      skip_ci_check:
+        description: 'Skip waiting for CI (use with caution)'
+        required: false
+        default: 'false'
+        type: boolean
 
 # Require that CI passes before deployment
 concurrency:
@@ -16,33 +23,60 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Check if CI workflow succeeded (unless manually skipped)
+  check-ci-status:
+    name: Check CI Status
+    runs-on: ubuntu-latest
+    # Only proceed if CI succeeded OR manual dispatch with skip flag
+    if: |
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'workflow_dispatch' && (inputs.skip_ci_check == 'true' || inputs.skip_ci_check == true))
+    
+    steps:
+      - name: Verify CI passed
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            echo "✅ Lambda CI/CD completed successfully"
+            echo "CI workflow run: ${{ github.event.workflow_run.html_url }}"
+            echo "CI workflow SHA: ${{ github.event.workflow_run.head_sha }}"
+          else
+            echo "⚠️ Manual trigger with CI check skipped"
+            echo "⚠️ Make sure Lambda CI/CD has completed for this commit"
+          fi
+  
   # Download artifacts from CI build
   prepare-artifacts:
     name: Prepare Artifacts
     runs-on: ubuntu-latest
+    needs: check-ci-status
+    # Use the workflow_run SHA if available, otherwise use current SHA
+    env:
+      WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.WORKFLOW_SHA }}
       
       - name: Download webhook-handler artifact
         uses: actions/download-artifact@v4
         with:
-          name: webhook-handler-${{ github.sha }}
+          name: webhook-handler-${{ env.WORKFLOW_SHA }}
           path: ./artifacts/
         continue-on-error: true
       
       - name: Download ai-processor artifact
         uses: actions/download-artifact@v4
         with:
-          name: ai-output-processor-${{ github.sha }}
+          name: ai-output-processor-${{ env.WORKFLOW_SHA }}
           path: ./artifacts/
         continue-on-error: true
       
       - name: Download telegram-bot artifact
         uses: actions/download-artifact@v4
         with:
-          name: telegram-bot-${{ github.sha }}
+          name: telegram-bot-${{ env.WORKFLOW_SHA }}
           path: ./artifacts/
         continue-on-error: true
       
@@ -76,7 +110,7 @@ jobs:
       - name: Upload combined artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: lambda-artifacts-dev-${{ github.sha }}
+          name: lambda-artifacts-dev-${{ env.WORKFLOW_SHA }}
           path: ./artifacts/*.zip
           retention-days: 7
           if-no-files-found: error
@@ -101,7 +135,7 @@ jobs:
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
-          name: lambda-artifacts-dev-${{ github.sha }}
+          name: lambda-artifacts-dev-${{ github.event.workflow_run.head_sha || github.sha }}
           path: ./terraform/artifacts/
       
       - name: Configure AWS credentials
