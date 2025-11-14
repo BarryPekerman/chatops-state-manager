@@ -734,9 +734,11 @@ class TestUIFunctions:
             response = webhook_handler.show_project_selection_menu(123456789, projects)
             assert response['statusCode'] == 200
             mock_send.assert_called_once()
-            # Check that reply_markup was passed
+            # Check that reply_markup was passed (as third positional argument)
             call_args = mock_send.call_args
-            assert call_args[1]['reply_markup'] is not None
+            assert len(call_args[0]) >= 3  # chat_id, message, reply_markup
+            assert call_args[0][2] is not None  # reply_markup is the third positional arg
+            assert 'inline_keyboard' in call_args[0][2]  # Verify it's a proper reply_markup dict
     
     def test_show_command_selection(self, mock_env, mock_secrets):
         """Test command selection menu"""
