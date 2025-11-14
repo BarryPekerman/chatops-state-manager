@@ -253,14 +253,16 @@ def trigger_github_workflow(command, chat_id, project=None, token=None):
             raise ValueError("Missing GitHub configuration")
 
         # Convert project to string if provided
-        project_value = str(project) if project is not None else None
+        project_value = None
+        if project is not None:
+            project_value = str(project)
         
         payload = {
             'event_type': 'telegram_command',
             'client_payload': {'command': command}
         }
         
-        if project_value:
+        if project_value is not None:
             payload['client_payload']['project'] = project_value
         if token:
             payload['client_payload']['token'] = str(token) if token is not None else None
