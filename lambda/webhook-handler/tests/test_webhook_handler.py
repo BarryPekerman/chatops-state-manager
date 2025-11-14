@@ -363,13 +363,15 @@ class TestGitHubWorkflowTrigger:
     def test_trigger_github_workflow_request_exception(self, mock_env, mock_secrets):
         """Test GitHub workflow trigger with RequestException"""
         import requests
+        import json
         with patch('webhook_handler.requests.post') as mock_post:
             mock_post.side_effect = requests.exceptions.RequestException('Connection error')
             
             response = webhook_handler.trigger_github_workflow('status', 123456789)
             
             assert response['statusCode'] == 500
-            assert response['body']['error'] == 'Failed to trigger GitHub workflow'
+            body = json.loads(response['body'])
+            assert body['error'] == 'Failed to trigger GitHub workflow'
     
     def test_missing_github_config(self, mock_secrets):
         """Test missing GitHub configuration"""
