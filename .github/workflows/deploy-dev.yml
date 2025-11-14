@@ -64,12 +64,22 @@ jobs:
             cd lambda/telegram-bot && ./build.sh && mv telegram-bot.zip ../../artifacts/
           fi
       
+      - name: Verify artifacts exist
+        run: |
+          echo "Checking for artifacts..."
+          ls -lh ./artifacts/ || echo "No artifacts directory found"
+          if [ ! -f ./artifacts/lambda_function.zip ] && [ ! -f ./artifacts/output_processor.zip ] && [ ! -f ./artifacts/telegram-bot.zip ]; then
+            echo "ERROR: No artifacts found after build fallback!"
+            exit 1
+          fi
+      
       - name: Upload combined artifacts
         uses: actions/upload-artifact@v4
         with:
           name: lambda-artifacts-dev-${{ github.sha }}
           path: ./artifacts/*.zip
           retention-days: 7
+          if-no-files-found: error
   
   # Deploy to dev environment
   deploy:

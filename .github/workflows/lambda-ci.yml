@@ -65,15 +65,15 @@ jobs:
         run: |
           echo "Building production artifact for ${{ matrix.lambda.name }}..."
           docker build \
-            --target build \
-            -t ${{ matrix.lambda.name }}:build \
+            --target artifact \
+            -t ${{ matrix.lambda.name }}:artifact \
             -f ${{ matrix.lambda.dockerfile }} \
             ${{ matrix.lambda.path }}
       
       - name: Extract ZIP artifact
         run: |
           echo "Extracting artifact: ${{ matrix.lambda.artifact }}"
-          container_id=$(docker create ${{ matrix.lambda.name }}:build)
+          container_id=$(docker create ${{ matrix.lambda.name }}:artifact)
           docker cp $container_id:/${{ matrix.lambda.artifact }} ./${{ matrix.lambda.artifact }}
           docker rm $container_id
           ls -lh ./${{ matrix.lambda.artifact }}
