@@ -1,0 +1,958 @@
+import json
+import os
+import requests
+import logging
+import hmac
+import hashlib
+import time
+import re
+import boto3
+from urllib.parse import parse_qs
+
+# Initialize Lambda client for AI processor invocation
+lambda_client = boto3.client('lambda')
+
+# Configure logging
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+# Initialize AWS Secrets Manager client
+secrets_client = boto3.client('secretsmanager')
+
+def get_secrets():
+    """
+    Retrieve all secrets from AWS Secrets Manager (JSON bundle)
+    """
+    try:
+        response = secrets_client.get_secret_value(SecretId='chatops/secrets')
+        return json.loads(response['SecretString'])
+    except Exception as e:
+        logger.error(f"Failed to retrieve secrets from Secrets Manager: {e}")
+        raise
+
+def get_project_registry():
+    """
+    Retrieve project registry from AWS Secrets Manager
+    """
+    try:
+        registry_secret_arn = os.environ.get('PROJECT_REGISTRY_SECRET_ARN')
+        if not registry_secret_arn:
+            logger.warning("PROJECT_REGISTRY_SECRET_ARN not configured")
+            return None
+        
+        # Extract secret name from ARN (format: arn:aws:secretsmanager:region:account:secret:name-xxxxx)
+        # Or use the ARN directly if it's already a name
+        if ':' in registry_secret_arn:
+            # ARN format: arn:aws:secretsmanager:region:account:secret:name-xxxxx
+            secret_id = registry_secret_arn.split(':')[-1]
+            # Remove the 6-character random suffix if present (AWS adds random suffix)
+            # But keep the secret name part
+            if '-' in secret_id and len(secret_id.split('-')[-1]) == 6:
+                # Check if last segment is 6 characters (random suffix)
+                parts = secret_id.rsplit('-', 1)
+                if len(parts) == 2 and len(parts[1]) == 6:
+                    secret_id = parts[0]
+        else:
+            # Already a secret name, use directly
+            secret_id = registry_secret_arn
+        
+        logger.info(f"Retrieving project registry from secret: {secret_id}")
+        response = secrets_client.get_secret_value(SecretId=secret_id)
+        registry = json.loads(response['SecretString'])
+        logger.info(f"Successfully retrieved project registry with {len(registry.get('projects', {}))} project(s)")
+        return registry
+    except Exception as e:
+        logger.error(f"Failed to retrieve project registry from Secrets Manager: {e}")
+        return None
+
+def get_github_token():
+    """
+    Retrieve GitHub token from AWS Secrets Manager
+    """
+    secrets = get_secrets()
+    return secrets['github_token']
+
+def get_telegram_bot_token():
+    """
+    Retrieve Telegram bot token from AWS Secrets Manager
+    """
+    secrets = get_secrets()
+    return secrets['telegram_bot_token']
+
+def get_telegram_secret_token():
+    """
+    Retrieve Telegram secret token from AWS Secrets Manager (generated internally)
+    """
+    # For webhook validation - this is optional, can return None if not needed
+    secrets = get_secrets()
+    return secrets.get('telegram_secret_token', None)
+
+def lambda_handler(event, context):
+    """
+    Lambda function to handle Telegram webhooks and trigger GitHub Actions
+    """
+    try:
+        # Log the incoming event for debugging
+        logger.info(f"Received event: {json.dumps(event)}")
+
+        # Telegram webhooks are already secure (come from Telegram servers)
+        # No additional API key authentication needed
+
+        # Handle CORS preflight requests
+        if event.get('httpMethod') == 'OPTIONS':
+            return {
+                'statusCode': 200,
+                'headers': {
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
+                    'Access-Control-Allow-Methods': 'POST,OPTIONS'
+                },
+                'body': json.dumps({'message': 'CORS preflight'})
+            }
+
+        # Parse the request body
+        if 'body' in event:
+            if event.get('isBase64Encoded', False):
+                import base64
+                body = json.loads(base64.b64decode(event['body']).decode('utf-8'))
+            else:
+                body = json.loads(event['body'])
+        else:
+            body = event
+
+        # Check if this is a callback from GitHub Actions (not a Telegram webhook)
+        # IMPORTANT: Check callback FIRST, before Telegram message parsing
+        # Callbacks have 'callback': true and 'chat_id' directly in body
+        # Telegram webhooks have 'message' key with nested structure
+        if isinstance(body, dict) and body.get('callback') is True:
+            logger.info("Processing GitHub Actions callback")
+            return handle_callback(body)
+        
+        # Handle Telegram callback queries (inline keyboard button clicks)
+        if 'callback_query' in body:
+            logger.info("Processing Telegram callback query")
+            return handle_callback_query(body['callback_query'])
+
+        # If no 'message' key, this is not a Telegram webhook - reject
+        if 'message' not in body:
+            logger.warning(f"Request body missing 'message' key (not a Telegram webhook or callback): {list(body.keys())}")
+            return {
+                'statusCode': 400,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                },
+                'body': json.dumps({'error': 'Invalid request format'})
+            }
+
+        # Validate Telegram webhook signature (only for real Telegram webhooks)
+        # Skip validation for internal requests (no X-Telegram-Bot-Api-Secret-Token header)
+        is_internal_request = 'X-Telegram-Bot-Api-Secret-Token' not in event.get('headers', {})
+
+        if not is_internal_request and not validate_telegram_webhook(body, event.get('headers', {})):
+            logger.warning("Invalid Telegram webhook signature")
+            return {
+                'statusCode': 403,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                },
+                'body': json.dumps({'error': 'Invalid webhook signature'})
+                }
+
+        # Extract message from Telegram webhook
+        message = body.get('message', {})
+        chat_id = message.get('chat', {}).get('id')
+        text = message.get('text', '').strip()
+        user_id = message.get('from', {}).get('id')
+        username = message.get('from', {}).get('username', 'unknown')
+
+        logger.info(f"Processing message from chat_id={chat_id}, user_id={user_id}, username={username}, text='{text}'")
+
+        # Check authorization
+        authorized_chat_id = os.environ.get('AUTHORIZED_CHAT_ID')
+        if str(chat_id) != str(authorized_chat_id):
+            logger.warning(f"Unauthorized chat ID: {chat_id} (expected: {authorized_chat_id})")
+            return {
+                'statusCode': 403,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                },
+                'body': json.dumps({'error': 'Unauthorized chat ID'})
+            }
+
+        # Parse command
+        if not text.startswith('/'):
+            return {
+                'statusCode': 200,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                },
+                'body': json.dumps({'message': 'Not a command'})
+            }
+
+        # Parse command and project (if specified)
+        parts = text.split()
+        command = parts[0].lower()
+        project = parts[1] if len(parts) > 1 else None
+
+        # Handle commands - Only 3 commands: /select, /list, /help
+        if command == '/select':
+            # Show project selection menu for any command
+            registry = get_project_registry()
+            if not registry:
+                send_telegram_message(chat_id, "❌ **Error**\n\nCould not load project registry.")
+                return {
+                    'statusCode': 200,
+                    'headers': {
+                        'Content-Type': 'application/json',
+                        'Access-Control-Allow-Origin': '*'
+                    },
+                    'body': json.dumps({'message': 'Failed to load registry'})
+                }
+            
+            projects = registry.get('projects', {})
+            if not projects:
+                send_telegram_message(chat_id, "📋 **No Projects**\n\nNo projects registered in the project registry.\n\nUse `/projects` to see available projects.")
+                return {
+                    'statusCode': 200,
+                    'headers': {
+                        'Content-Type': 'application/json',
+                        'Access-Control-Allow-Origin': '*'
+                    },
+                    'body': json.dumps({'message': 'No projects available'})
+                }
+            
+            # Show selection menu with command options
+            return show_project_selection_menu(chat_id, projects)
+        elif command == '/list' or command == '/projects':
+            return list_projects(chat_id)
+        elif command == '/help' or command == '/start':
+            return show_help(chat_id)
+        else:
+            return {
+                'statusCode': 200,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                },
+                'body': json.dumps({'message': f'Unknown command: {command}. Use /help to see available commands.'})
+            }
+
+    except Exception as e:
+        logger.error(f"Error processing webhook: {str(e)}")
+        return {
+            'statusCode': 500,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps({'error': 'Internal server error'})
+        }
+
+def validate_telegram_webhook(body, headers):
+    """
+    Validate Telegram webhook signature for security
+    """
+    try:
+        # Get the signature from headers
+        signature = headers.get('x-telegram-bot-api-secret-token')
+        if not signature:
+            logger.warning("No Telegram signature found in headers")
+            return False
+
+        # Get secret token from Secrets Manager
+        secret_token = get_telegram_secret_token()
+        if not secret_token:
+            logger.warning("No Telegram secret token configured")
+            return False
+
+        # For now, we'll use a simple secret token validation
+        # In production, you should implement proper HMAC validation
+        return signature == secret_token
+
+    except Exception as e:
+        logger.error(f"Error validating Telegram webhook: {str(e)}")
+        return False
+
+def trigger_github_workflow(command, chat_id, project=None):
+    """
+    Trigger GitHub Actions workflow via repository_dispatch
+    """
+    try:
+        # Get GitHub token from Secrets Manager
+        github_token = get_github_token()
+        github_owner = os.environ.get('GITHUB_OWNER')
+        github_repo = os.environ.get('GITHUB_REPO')
+
+        if not all([github_token, github_owner, github_repo]):
+            raise ValueError("Missing GitHub configuration")
+
+        # Prepare payload
+        payload = {
+            'event_type': 'telegram_command',
+            'client_payload': {
+                'command': command
+            }
+        }
+        
+        if project:
+            payload['client_payload']['project'] = project
+
+        # Trigger GitHub Actions workflow
+        url = f"https://api.github.com/repos/{github_owner}/{github_repo}/dispatches"
+        headers = {
+            'Authorization': f'token {github_token}',
+            'Accept': 'application/vnd.github.v3+json',
+            'Content-Type': 'application/json'
+        }
+
+        response = requests.post(url, headers=headers, json=payload)
+        response.raise_for_status()
+
+        logger.info(f"Successfully triggered GitHub workflow for command: {command}, project: {project}")
+
+        # Send immediate feedback to Telegram
+        send_telegram_feedback(chat_id, command, project)
+
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps({
+                'message': f'Command {command} triggered successfully',
+                'command': command,
+                'project': project
+            })
+        }
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"GitHub API error: {str(e)}")
+        return {
+            'statusCode': 500,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps({'error': 'Failed to trigger GitHub workflow'})
+        }
+    except Exception as e:
+        logger.error(f"Error triggering workflow: {str(e)}")
+        return {
+            'statusCode': 500,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps({'error': 'Internal error'})
+        }
+
+def send_telegram_feedback(chat_id, command, project=None):
+    """Send feedback message to Telegram user"""
+    try:
+        telegram_bot_token = get_telegram_bot_token()
+        if not telegram_bot_token:
+            logger.warning("No Telegram bot token configured")
+            return
+
+        # Prepare feedback message based on command
+        project_text = f" for project: `{project}`" if project else ""
+        
+        if command == 'status':
+            message = f"🔍 **Status Check Initiated**{project_text}\n\nChecking Terraform state...\n\n⏳ This may take a few moments."
+        elif command == 'destroy':
+            message = f"💥 **Destroy Plan Created**{project_text}\n\n⚠️ **Review the plan carefully!**\n\nTo confirm destruction, send:\n`/confirm_destroy {project}`" if project else f"💥 **Destroy Plan Created**{project_text}\n\n⚠️ **Review the plan carefully!**\n\nTo confirm destruction, send:\n`/confirm_destroy`"
+        elif command == 'confirm_destroy':
+            message = f"🚀 **Destroy Confirmed**{project_text}\n\n💥 **Executing destruction...**\n\n⏳ This may take several minutes."
+        else:
+            message = f"✅ **Command Processed**{project_text}\n\nCommand: `{command}`\n\n⏳ Processing..."
+
+        # Send message to Telegram
+        telegram_url = f"https://api.telegram.org/bot{telegram_bot_token}/sendMessage"
+        payload = {
+            'chat_id': chat_id,
+            'text': message,
+            'parse_mode': 'Markdown'
+        }
+
+        response = requests.post(telegram_url, json=payload, timeout=10)
+        response.raise_for_status()
+
+        logger.info(f"Sent Telegram feedback to {chat_id}: {command}")
+
+    except Exception as e:
+        logger.error(f"Failed to send Telegram feedback: {e}")
+
+def handle_callback(body):
+    """
+    Handle callback from GitHub Actions workflow - route to AI processor or send directly to Telegram
+    """
+    try:
+        chat_id = body.get('chat_id')
+        command = body.get('command', 'unknown')
+        raw_output = body.get('raw_output', '')
+        run_id = body.get('run_id')
+        project = body.get('project')
+
+        logger.info(f"Processing callback for command={command}, chat_id={chat_id}, project={project}, output_length={len(raw_output)}")
+
+        if not chat_id:
+            logger.error("Missing chat_id in callback")
+            return {
+                'statusCode': 400,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                },
+                'body': json.dumps({'error': 'Missing chat_id'})
+            }
+
+        # TEMPORARY WORKAROUND: Bypass processor for status command
+        # Status command shows raw terraform state list output directly
+        # TODO: Remove this workaround once status formatting is improved
+        if command == 'status':
+            logger.info(f"TEMPORARY WORKAROUND: Bypassing processor for status command, sending raw output directly")
+            return send_telegram_message_direct(chat_id, command, raw_output, run_id, project)
+
+        # Get AI processor configuration
+        ai_processor_arn = os.environ.get('AI_PROCESSOR_FUNCTION_ARN', '').strip()
+
+        # Always invoke processor if configured (hybrid workflow handles length internally)
+        # The processor will use regex for formatting and only invoke LLM for errors/high-risk
+        if ai_processor_arn and len(ai_processor_arn) > 0:
+            logger.info(f"Invoking processor for command={command}, output_length={len(raw_output)}")
+            return invoke_ai_processor(chat_id, command, raw_output, run_id, project)
+        else:
+            logger.warning("AI_PROCESSOR_FUNCTION_ARN not configured, sending directly to Telegram")
+            return send_telegram_message_direct(chat_id, command, raw_output, run_id, project)
+
+    except Exception as e:
+        logger.error(f"Error handling callback: {str(e)}")
+        return {
+            'statusCode': 500,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps({'error': 'Internal server error'})
+        }
+
+def invoke_ai_processor(chat_id, command, raw_output, run_id=None, project=None):
+    """
+    Invoke AI processor Lambda to process output with AI and send to Telegram
+    """
+    try:
+        ai_processor_arn = os.environ.get('AI_PROCESSOR_FUNCTION_ARN', '').strip()
+        if not ai_processor_arn or len(ai_processor_arn) == 0:
+            logger.error("AI_PROCESSOR_FUNCTION_ARN not configured or empty")
+            return send_telegram_message_direct(chat_id, command, raw_output, run_id, project)
+
+        # Prepare payload for AI processor
+        payload = {
+            'body': json.dumps({
+                'raw_output': raw_output,
+                'command': command,
+                'chat_id': str(chat_id),
+                'run_id': run_id,
+                'project': project
+            })
+        }
+
+        # Invoke AI processor asynchronously
+        response = lambda_client.invoke(
+            FunctionName=ai_processor_arn,
+            InvocationType='Event',
+            Payload=json.dumps(payload)
+        )
+
+        logger.info(f"Invoked AI processor: {response['StatusCode']}")
+
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps({'message': 'Callback processed, AI processor invoked'})
+        }
+
+    except Exception as e:
+        logger.error(f"Error invoking AI processor: {str(e)}")
+        # Fallback to direct message
+        return send_telegram_message_direct(chat_id, command, raw_output, run_id, project)
+
+def send_telegram_message_direct(chat_id, command, raw_output, run_id=None, project=None):
+    """
+    Send message directly to Telegram without AI processing
+    """
+    try:
+        telegram_bot_token = get_telegram_bot_token()
+        if not telegram_bot_token:
+            logger.error("No Telegram bot token configured")
+            return {
+                'statusCode': 500,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                },
+                'body': json.dumps({'error': 'Telegram bot token not configured'})
+            }
+
+        max_length = int(os.environ.get('MAX_MESSAGE_LENGTH', 3500))
+        
+        # Truncate output if too long
+        if len(raw_output) > max_length:
+            raw_output = raw_output[:max_length] + f"\n\n... (truncated, original length: {len(raw_output)} characters)"
+
+        # Format message based on command
+        project_text = f" (Project: `{project}`)" if project else ""
+        
+        reply_markup = None
+        
+        if command == 'status':
+            message = f"📊 **Terraform State**{project_text}\n\n```\n{raw_output}\n```"
+        elif command == 'destroy':
+            message = f"💥 **Destroy Plan**{project_text}\n\n```\n{raw_output}\n```\n\n⚠️ **Review the plan carefully!**"
+            # Add Confirm Destroy button if project is available
+            if project:
+                keyboard = [[
+                    {'text': '✅ Confirm Destroy', 'callback_data': f'confirm_destroy:{project}'},
+                    {'text': '❌ Cancel', 'callback_data': 'cancel'}
+                ]]
+                reply_markup = {'inline_keyboard': keyboard}
+        elif command == 'confirm_destroy':
+            message = f"✅ **Destroy Complete**{project_text}\n\n```\n{raw_output}\n```"
+        elif command == 'list_projects':
+            # For list_projects, the output is already formatted
+            message = raw_output
+        else:
+            message = f"📋 **Command Output**{project_text}\n\n```\n{raw_output}\n```"
+
+        # Send message to Telegram
+        telegram_url = f"https://api.telegram.org/bot{telegram_bot_token}/sendMessage"
+        payload = {
+            'chat_id': chat_id,
+            'text': message,
+            'parse_mode': 'Markdown'
+        }
+        
+        if reply_markup:
+            payload['reply_markup'] = reply_markup
+
+        response = requests.post(telegram_url, json=payload, timeout=10)
+        response.raise_for_status()
+
+        logger.info(f"Sent direct Telegram message to {chat_id}: {command}")
+
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps({'message': 'Callback processed, message sent to Telegram'})
+        }
+
+    except Exception as e:
+        logger.error(f"Error sending Telegram message: {str(e)}")
+        return {
+            'statusCode': 500,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps({'error': 'Failed to send Telegram message'})
+        }
+
+def list_projects(chat_id):
+    """
+    List all projects in the project registry
+    """
+    try:
+        registry = get_project_registry()
+        if not registry:
+            message = "❌ **Error**\n\nCould not retrieve project registry.\n\nPlease ensure the project registry is configured."
+            send_telegram_message(chat_id, message)
+            return {
+                'statusCode': 200,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                },
+                'body': json.dumps({'message': 'Error retrieving project registry'})
+            }
+        
+        projects = registry.get('projects', {})
+        
+        if not projects:
+            message = "📋 **Registered Projects**\n\nNo projects registered in the project registry.\n\nTo add a project, use:\n`./scripts/terraform-chatops-helper register ./terraform-config <project-name>`"
+        else:
+            project_list = []
+            for project_name, project_config in projects.items():
+                enabled = project_config.get('enabled', True)
+                status = "✓ Enabled" if enabled else "✗ Disabled"
+                bucket = project_config.get('backend_bucket', 'N/A')
+                key = project_config.get('backend_key', 'N/A')
+                region = project_config.get('region', 'N/A')
+                workspace = project_config.get('workspace', 'default')
+                
+                project_list.append(f"• **{project_name}** ({status})\n  Backend: `{bucket}`\n  Key: `{key}`\n  Region: `{region}`\n  Workspace: `{workspace}`")
+            
+            message = f"📋 **Registered Projects** ({len(projects)})\n\n" + "\n\n".join(project_list)
+        
+        send_telegram_message(chat_id, message)
+        
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps({'message': 'Project list sent'})
+        }
+    except Exception as e:
+        logger.error(f"Error listing projects: {str(e)}")
+        message = f"❌ **Error**\n\nFailed to list projects: {str(e)}"
+        send_telegram_message(chat_id, message)
+        return {
+            'statusCode': 500,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps({'error': 'Failed to list projects'})
+        }
+
+def send_telegram_message(chat_id, message, reply_markup=None):
+    """
+    Helper function to send a message to Telegram
+    """
+    try:
+        telegram_bot_token = get_telegram_bot_token()
+        if not telegram_bot_token:
+            logger.warning("No Telegram bot token configured")
+            return
+        
+        telegram_url = f"https://api.telegram.org/bot{telegram_bot_token}/sendMessage"
+        payload = {
+            'chat_id': chat_id,
+            'text': message,
+            'parse_mode': 'Markdown'
+        }
+        
+        if reply_markup:
+            payload['reply_markup'] = reply_markup
+        
+        response = requests.post(telegram_url, json=payload, timeout=10)
+        response.raise_for_status()
+        
+        logger.info(f"Sent Telegram message to {chat_id}")
+    except Exception as e:
+        logger.error(f"Failed to send Telegram message: {e}")
+
+def show_project_selection_menu(chat_id, projects):
+    """
+    Show a project selection menu (Step 1) - shows only project names
+    """
+    try:
+        project_names = list(projects.keys())
+        
+        # Create inline keyboard with project buttons (2 per row)
+        keyboard = []
+        
+        # Add header message for Step 1
+        message = "🔍 **Select a project:**\n\n"
+        
+        # Create buttons: projects in rows of 2 (just project names)
+        for i in range(0, len(project_names), 2):
+            row = []
+            for j in range(2):
+                if i + j < len(project_names):
+                    project_name = project_names[i + j]
+                    enabled = projects[project_name].get('enabled', True)
+                    if not enabled:
+                        continue  # Skip disabled projects
+                    
+                    # Use callback_data format: select_project:{project_name}
+                    row.append({
+                        'text': project_name,
+                        'callback_data': f'select_project:{project_name}'
+                    })
+            if row:  # Only add row if it has at least one button
+                keyboard.append(row)
+        
+        # Add utility buttons
+        keyboard.append([{'text': '📋 List All Projects', 'callback_data': 'list_projects'}])
+        keyboard.append([{'text': '❌ Cancel', 'callback_data': 'cancel'}])
+        
+        reply_markup = {
+            'inline_keyboard': keyboard
+        }
+        
+        send_telegram_message(chat_id, message, reply_markup)
+        
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps({'message': 'Project selection menu shown'})
+        }
+    except Exception as e:
+        logger.error(f"Error showing project selection menu: {str(e)}")
+        return {
+            'statusCode': 500,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps({'error': 'Failed to show project selection menu'})
+        }
+
+def show_command_selection(chat_id, project_name):
+    """
+    Show command selection menu (Step 2) - shows Status/Destroy buttons after project is selected
+    """
+    try:
+        # Create inline keyboard with command buttons
+        keyboard = []
+        
+        # Add command buttons: Status and Destroy
+        keyboard.append([
+            {'text': '📊 Status', 'callback_data': f'status:{project_name}'},
+            {'text': '💥 Destroy', 'callback_data': f'destroy:{project_name}'}
+        ])
+        
+        # Add navigation and utility buttons
+        keyboard.append([
+            {'text': '← Back', 'callback_data': 'back'},
+            {'text': '❌ Cancel', 'callback_data': 'cancel'}
+        ])
+        
+        reply_markup = {
+            'inline_keyboard': keyboard
+        }
+        
+        # Message for Step 2: command selection
+        message = f"✅ **Selected project:** `{project_name}`\n\n**What would you like to do?**"
+        
+        send_telegram_message(chat_id, message, reply_markup)
+        
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps({'message': 'Command selection shown'})
+        }
+    except Exception as e:
+        logger.error(f"Error showing command selection: {str(e)}")
+        return {
+            'statusCode': 500,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps({'error': 'Failed to show command selection'})
+        }
+
+def show_help(chat_id):
+    """
+    Show help message with available commands
+    """
+    try:
+        message = """📋 **ChatOps Commands**
+
+**Available Commands:**
+• `/select` - Select a project and action (Status or Destroy Plan)
+• `/list` - List all registered projects with details
+• `/help` - Show this help message
+
+**How to Use:**
+1. Use `/select` to choose a project and action
+2. Select a project from the list
+3. Choose an action:
+   - **Status**: Check Terraform state
+   - **Destroy Plan**: Show destroy plan (review carefully!)
+4. To confirm destruction, type: `/confirm_destroy <project-name>`
+
+**Examples:**
+• `/select` - Start project selection
+• `/list` - View all projects with backend details
+• `/help` - Show this help message"""
+        
+        send_telegram_message(chat_id, message)
+        
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps({'message': 'Help sent'})
+        }
+    except Exception as e:
+        logger.error(f"Error showing help: {str(e)}")
+        return {
+            'statusCode': 500,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps({'error': 'Failed to show help'})
+        }
+
+def handle_callback_query(callback_query):
+    """
+    Handle Telegram callback queries (inline keyboard button clicks)
+    """
+    try:
+        chat_id = callback_query.get('message', {}).get('chat', {}).get('id')
+        callback_data = callback_query.get('data', '')
+        query_id = callback_query.get('id')
+        
+        logger.info(f"Processing callback query: {callback_data} from chat {chat_id}")
+        
+        # Check authorization
+        authorized_chat_id = os.environ.get('AUTHORIZED_CHAT_ID')
+        if str(chat_id) != str(authorized_chat_id):
+            logger.warning(f"Unauthorized chat ID in callback: {chat_id}")
+            answer_callback_query(query_id, "Unauthorized")
+            return {
+                'statusCode': 403,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                },
+                'body': json.dumps({'error': 'Unauthorized'})
+            }
+        
+        # Parse callback data: format is "select_project:project_name", "command:project_name", "list_projects", "cancel", or "back"
+        if callback_data == 'list_projects':
+            answer_callback_query(query_id, "Loading projects...")
+            return list_projects(chat_id)
+        elif callback_data == 'cancel':
+            answer_callback_query(query_id, "Cancelled")
+            send_telegram_message(chat_id, "❌ Selection cancelled. Use /help to see available commands.")
+            return {
+                'statusCode': 200,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                },
+                'body': json.dumps({'message': 'Selection cancelled'})
+            }
+        elif callback_data == 'back':
+            # Return to project selection (Step 1)
+            answer_callback_query(query_id, "Returning to project selection...")
+            registry = get_project_registry()
+            if not registry:
+                send_telegram_message(chat_id, "❌ **Error**\n\nCould not load project registry.")
+                return {
+                    'statusCode': 200,
+                    'headers': {
+                        'Content-Type': 'application/json',
+                        'Access-Control-Allow-Origin': '*'
+                    },
+                    'body': json.dumps({'message': 'Failed to load registry'})
+                }
+            projects = registry.get('projects', {})
+            if not projects:
+                send_telegram_message(chat_id, "📋 **No Projects**\n\nNo projects registered in the project registry.\n\nUse `/projects` to see available projects.")
+                return {
+                    'statusCode': 200,
+                    'headers': {
+                        'Content-Type': 'application/json',
+                        'Access-Control-Allow-Origin': '*'
+                    },
+                    'body': json.dumps({'message': 'No projects available'})
+                }
+            return show_project_selection_menu(chat_id, projects)
+        
+        # Parse callback data with colon separator
+        if ':' in callback_data:
+            command, project = callback_data.split(':', 1)
+            
+            # Handle project selection (Step 1 -> Step 2)
+            if command == 'select_project':
+                answer_callback_query(query_id, f"Selected: {project}")
+                return show_command_selection(chat_id, project)
+            
+            # Handle command execution (Step 2 -> workflow)
+            elif command == 'status' or command == 'destroy':
+                # Answer callback to show loading
+                answer_callback_query(query_id, f"Processing {command} for {project}...")
+                
+                # Trigger the workflow with the selected project
+                if command == 'status':
+                    return trigger_github_workflow('status', chat_id, project=project)
+                elif command == 'destroy':
+                    return trigger_github_workflow('destroy', chat_id, project=project)
+            elif command == 'confirm_destroy':
+                # Handle confirm destroy button click
+                answer_callback_query(query_id, f"Confirming destruction for {project}...")
+                return trigger_github_workflow('confirm_destroy', chat_id, project=project)
+            else:
+                answer_callback_query(query_id, f"Unknown command: {command}", show_alert=True)
+                return {
+                    'statusCode': 200,
+                    'headers': {
+                        'Content-Type': 'application/json',
+                        'Access-Control-Allow-Origin': '*'
+                    },
+                    'body': json.dumps({'message': 'Unknown command'})
+                }
+        else:
+            answer_callback_query(query_id, "Invalid callback data", show_alert=True)
+            return {
+                'statusCode': 400,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                },
+                'body': json.dumps({'error': 'Invalid callback data'})
+            }
+            
+    except Exception as e:
+        logger.error(f"Error handling callback query: {str(e)}")
+        if 'query_id' in locals():
+            answer_callback_query(query_id, "Error processing request", show_alert=True)
+        return {
+            'statusCode': 500,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps({'error': 'Internal server error'})
+        }
+
+def answer_callback_query(query_id, text, show_alert=False):
+    """
+    Answer a Telegram callback query (required for inline keyboard buttons)
+    """
+    try:
+        telegram_bot_token = get_telegram_bot_token()
+        if not telegram_bot_token:
+            return
+        
+        telegram_url = f"https://api.telegram.org/bot{telegram_bot_token}/answerCallbackQuery"
+        payload = {
+            'callback_query_id': query_id,
+            'text': text,
+            'show_alert': show_alert
+        }
+        
+        response = requests.post(telegram_url, json=payload, timeout=10)
+        response.raise_for_status()
+        
+        logger.info(f"Answered callback query: {query_id}")
+    except Exception as e:
+        logger.error(f"Failed to answer callback query: {e}")
+
+

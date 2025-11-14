@@ -1,0 +1,67 @@
+# Dockerfile for webhook-handler Lambda
+FROM python:3.11-slim as base
+
+WORKDIR /opt/app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    zip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy source files
+COPY src/requirements.txt ./
+COPY src/webhook_handler.py ./
+
+# Install runtime dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt -t .
+
+# Test stage - runs unit tests and security scans
+FROM base as test
+
+# Set AWS region before importing modules (required for boto3)
+ENV AWS_DEFAULT_REGION=us-east-1
+
+# Install test and security dependencies
+RUN pip install --no-cache-dir \
+    pytest==7.4.3 \
+    pytest-cov==4.1.0 \
+    pytest-mock==3.12.0 \
+    moto[secretsmanager]==4.2.10 \
+    bandit==1.7.5 \
+    safety==2.3.5
+
+# Copy test files
+COPY tests/ ./tests/
+
+# Run security scans
+RUN echo "Running security scans..." && \
+    bandit -r webhook_handler.py -f json -o /tmp/bandit-report.json || true && \
+    safety check --json || true
+
+# Run unit tests with coverage
+RUN echo "Running unit tests..." && \
+    pytest tests/ -v --cov=. --cov-report=term-missing --cov-report=html --cov-fail-under=70
+
+# Build stage - creates ZIP artifact
+FROM base as build
+
+# Remove test files and create clean ZIP
+RUN zip -r /tmp/lambda_function.zip . -x "*.pyc" "__pycache__/*" "tests/*" "*.dist-info/*"
+
+# Runtime stage - for local testing with docker-compose
+FROM python:3.11-slim as runtime
+
+WORKDIR /var/task
+
+# Copy installed dependencies and source
+COPY --from=base /opt/app /var/task/
+
+# Set Lambda runtime interface if needed for local testing
+ENV PYTHONUNBUFFERED=1
+
+CMD ["webhook_handler.lambda_handler"]
+
+# Artifact stage - for CI/CD artifact extraction
+FROM scratch as artifact
+COPY --from=build /tmp/lambda_function.zip /
