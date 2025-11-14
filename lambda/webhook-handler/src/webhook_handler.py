@@ -245,27 +245,49 @@ def trigger_github_workflow(command, chat_id, project=None, token=None):
         token: Token for confirm_destroy (if specified)
     """
     try:
-        github_token = get_github_token()
-        github_owner = os.environ.get('GITHUB_OWNER')
-        github_repo = os.environ.get('GITHUB_REPO')
+        # Wrap the entire function in a recursion-safe handler
+        try:
+            github_token = get_github_token()
+            github_owner = os.environ.get('GITHUB_OWNER')
+            github_repo = os.environ.get('GITHUB_REPO')
 
-        if not all([github_token, github_owner, github_repo]):
-            raise ValueError("Missing GitHub configuration")
+            if not all([github_token, github_owner, github_repo]):
+                raise ValueError("Missing GitHub configuration")
 
-        # Ensure project is a simple value (string or None) to avoid recursion issues
-        # Safely convert project to string, handling potential recursion errors
-        if project is None:
+            # Ensure project is a simple value (string or None) to avoid recursion issues
+            # Safely convert project to string, handling potential recursion errors
+            # Use type() instead of isinstance() to avoid potential recursion in __instancecheck__
             project_value = None
-        elif isinstance(project, str):
-            project_value = project
-        else:
-            try:
-                project_value = str(project)
-            except RecursionError:
-                # If recursion occurs, use a safe fallback
-                project_value = f"<{type(project).__name__}>"
-            except Exception:
-                project_value = None
+            if project is not None:
+                try:
+                    # Check if it's already a string using type() to avoid recursion
+                    if type(project) is str:
+                        project_value = project
+                    else:
+                        # Try to convert to string, but catch recursion errors
+                        try:
+                            project_value = str(project)
+                        except RecursionError:
+                            # If recursion occurs, use a safe fallback
+                            try:
+                                type_name = type(project).__name__
+                                project_value = f"<{type_name}>"
+                            except (RecursionError, Exception):
+                                project_value = "<object>"
+                        except Exception:
+                            project_value = None
+                except (RecursionError, Exception):
+                    # If even type() causes recursion, just use None
+                    project_value = None
+        except RecursionError:
+            # If recursion happens early, use safe defaults
+            project_value = None
+            github_token = get_github_token()
+            github_owner = os.environ.get('GITHUB_OWNER')
+            github_repo = os.environ.get('GITHUB_REPO')
+            
+            if not all([github_token, github_owner, github_repo]):
+                raise ValueError("Missing GitHub configuration")
         
         payload = {
             'event_type': 'telegram_command',
@@ -300,15 +322,23 @@ def trigger_github_workflow(command, chat_id, project=None, token=None):
         error_msg = str(e) if e else 'Unknown error'
         logger.error(f"GitHub API error: {error_msg}")
         return create_response(500, {'error': 'Failed to trigger GitHub workflow'})
+    except RecursionError:
+        # Special handling for recursion errors - don't try to format anything
+        logger.error("Error triggering workflow: RecursionError occurred")
+        return create_response(500, {'error': 'Internal error'})
     except Exception as e:
         # Safely convert exception to string to avoid recursion issues
         try:
             error_msg = str(e) if e else 'Unknown error'
         except RecursionError:
-            error_msg = f"Error type: {type(e).__name__}"
+            error_msg = 'RecursionError (failed to format exception)'
         except Exception:
             error_msg = 'Internal error (failed to format exception)'
-        logger.error(f"Error triggering workflow: {error_msg}")
+        try:
+            logger.error(f"Error triggering workflow: {error_msg}")
+        except RecursionError:
+            # Even logging can cause recursion, so use a simple message
+            logger.error("Error triggering workflow: RecursionError in logging")
         return create_response(500, {'error': 'Internal error'})
 
 def send_telegram_feedback(chat_id, command, project=None):
