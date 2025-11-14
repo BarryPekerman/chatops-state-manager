@@ -48,6 +48,9 @@ jobs:
       
       - name: Build artifacts if not found
         run: |
+          # Create artifacts directory if it doesn't exist
+          mkdir -p ./artifacts/
+          
           if [ ! -f ./artifacts/lambda_function.zip ]; then
             echo "Building webhook-handler..."
             cd lambda/webhook-handler && ./build.sh && mv lambda_function.zip ../../artifacts/

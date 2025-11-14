@@ -1,0 +1,28 @@
+[extend]
+    paths = ["."]
+
+[allowlist]
+    description = "Allowed false positives and binary/artifact paths"
+    files = [
+        ".terraform/",
+        "terraform.tfstate.*",
+        ".gitignore",
+        ".pre-commit-config.yaml",
+        ".secrets.baseline",
+        ".zip$",
+        ".tar.gz$",
+        "__pycache__/",
+        ".lock.hcl$",
+        "**/test_*.py",
+        "**/tests/**/*.py",
+    ]
+    regexes = [
+        "(?i)example|dummy|placeholder|test|sample",
+        "(?i)test-.*-key",
+        "(?i)test.*api.*key",
+        "test-api-key-\\d+",
+        "^-----BEGIN PUBLIC KEY-----$",
+    ]
+
+[rules]
+    # Use built-in gitleaks rules; tuning can be added here if needed
