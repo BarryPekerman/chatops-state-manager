@@ -381,9 +381,29 @@ class TestErrorHandling:
         sys.path.insert(0, '/lambda/webhook-handler/src')
         import webhook_handler
         
-        # Don't setup secrets - should fail gracefully
+        # Ensure secrets are deleted before testing
+        client = boto3.client(
+            'secretsmanager',
+            region_name=AWS_REGION,
+            endpoint_url=LOCALSTACK_URL,
+            aws_access_key_id='test',
+            aws_secret_access_key='test'
+        )
+        
+        # Delete secret if it exists
+        try:
+            client.delete_secret(
+                SecretId='chatops/secrets',
+                ForceDeleteWithoutRecovery=True
+            )
+            # Wait a bit for deletion to complete
+            time.sleep(0.5)
+        except:
+            pass  # Secret might not exist, which is fine
+        
         os.environ['AWS_ENDPOINT_URL'] = LOCALSTACK_URL
         
+        # Now get_secrets should raise an exception
         with pytest.raises(Exception):
             webhook_handler.get_secrets()
 

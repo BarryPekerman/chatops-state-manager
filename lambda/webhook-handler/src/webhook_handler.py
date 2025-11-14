@@ -180,7 +180,7 @@ def lambda_handler(event, context):
         command = parts[0].lower()
         project = parts[1] if len(parts) > 1 else None
 
-        # Handle commands - Only 3 commands: /select, /list, /help
+        # Handle commands - Project selection and workflow-triggering commands
         if command == '/select':
             registry = get_project_registry()
             if not registry:
@@ -197,6 +197,11 @@ def lambda_handler(event, context):
             return list_projects(chat_id)
         elif command == '/help' or command == '/start':
             return show_help(chat_id)
+        elif command in ['/status', '/destroy', '/confirm_destroy']:
+            # Commands that trigger GitHub workflows
+            # Extract command name without the leading slash
+            workflow_command = command[1:]  # Remove leading '/'
+            return trigger_github_workflow(workflow_command, chat_id, project=project)
         else:
             return create_response(200, {'message': f'Unknown command: {command}. Use /help to see available commands.'})
 
@@ -752,8 +757,8 @@ def sanitize_workflow_output(text):
             available_length = max_length - len(truncation_msg)
             text = text[:available_length] + truncation_msg
     
-    # Redact GitHub tokens (ghp_ prefix followed by alphanumeric)
-    text = re.sub(r'ghp_[a-zA-Z0-9]{36}', '[REDACTED]', text)
+    # Redact GitHub tokens (ghp_ prefix followed by alphanumeric, typically 36+ chars)
+    text = re.sub(r'ghp_[a-zA-Z0-9]{20,}', '[REDACTED]', text)
     
     # Redact AWS access keys (AKIA prefix)
     text = re.sub(r'AKIA[0-9A-Z]{16}', '[REDACTED]', text)
@@ -761,6 +766,12 @@ def sanitize_workflow_output(text):
     # Redact AWS secret keys (base64-like pattern, but not simple repeated characters)
     # Only match if it contains at least some variation (not all same character)
     text = re.sub(r'[A-Za-z0-9/+=]{40,}', lambda m: '[REDACTED]' if len(set(m.group())) > 3 else m.group(), text)
+    
+    # Redact generic password patterns (password=value or password: value)
+    text = re.sub(r'(?i)password\s*[=:]\s*[^\s\n\r]+', '[REDACTED]', text)
+    
+    # Redact generic secret/token patterns
+    text = re.sub(r'(?i)(secret|token)\s*[=:]\s*[^\s\n\r]+', '[REDACTED]', text)
     
     return text
 
