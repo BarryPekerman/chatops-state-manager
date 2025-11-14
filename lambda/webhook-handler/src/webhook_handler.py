@@ -255,30 +255,34 @@ def trigger_github_workflow(command, chat_id, project=None, token=None):
                 raise ValueError("Missing GitHub configuration")
 
             # Ensure project is a simple value (string or None) to avoid recursion issues
-            # Safely convert project to string, handling potential recursion errors
-            # Use type() instead of isinstance() to avoid potential recursion in __instancecheck__
+            # Default to None - only set project_value if we can safely verify project is a string
             project_value = None
-            if project is not None:
+            # Use a very defensive approach - only process project if we can do so safely
+            # If anything goes wrong at any point, just use None
+            try:
+                # Try to get the type first - this is the safest check
                 try:
-                    # Check if it's already a string using type() to avoid recursion
-                    if type(project) is str:
+                    project_type = type(project)
+                    # Only proceed if we got a type successfully
+                    if project_type is type(None):
+                        # It's None, which is fine
+                        project_value = None
+                    elif project_type is str:
+                        # It's already a string, use it directly
                         project_value = project
                     else:
-                        # Try to convert to string, but catch recursion errors
+                        # It's something else, try to convert to string
                         try:
                             project_value = str(project)
-                        except RecursionError:
-                            # If recursion occurs, use a safe fallback
-                            try:
-                                type_name = type(project).__name__
-                                project_value = f"<{type_name}>"
-                            except (RecursionError, Exception):
-                                project_value = "<object>"
-                        except Exception:
+                        except (RecursionError, Exception):
+                            # Conversion failed, use None
                             project_value = None
                 except (RecursionError, Exception):
-                    # If even type() causes recursion, just use None
+                    # type() itself failed, use None
                     project_value = None
+            except (RecursionError, Exception):
+                # Anything else failed, use None
+                project_value = None
         except RecursionError:
             # If recursion happens early, use safe defaults
             project_value = None
@@ -309,14 +313,31 @@ def trigger_github_workflow(command, chat_id, project=None, token=None):
         response = requests.post(url, headers=headers, json=payload)
         response.raise_for_status()
 
-        logger.info(f"Successfully triggered GitHub workflow for command: {command}, project: {project_value}")
-        send_telegram_feedback(chat_id, command, project_value)
+        # Safely log and send feedback, catching any recursion errors
+        try:
+            logger.info(f"Successfully triggered GitHub workflow for command: {command}, project: {project_value}")
+        except (RecursionError, Exception):
+            logger.info("Successfully triggered GitHub workflow")
+        
+        try:
+            send_telegram_feedback(chat_id, command, project_value)
+        except (RecursionError, Exception):
+            # If feedback fails, continue anyway
+            pass
 
-        return create_response(200, {
-            'message': f'Command {command} triggered successfully',
-            'command': command,
-            'project': project_value
-        })
+        # Safely create response
+        try:
+            return create_response(200, {
+                'message': f'Command {command} triggered successfully',
+                'command': command,
+                'project': project_value
+            })
+        except (RecursionError, Exception):
+            # If creating response fails, return a simple success message
+            return create_response(200, {
+                'message': 'Command triggered successfully',
+                'command': command
+            })
 
     except requests.exceptions.RequestException as e:
         error_msg = str(e) if e else 'Unknown error'
