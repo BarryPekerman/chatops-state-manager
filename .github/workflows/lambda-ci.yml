@@ -61,22 +61,24 @@ jobs:
           echo "Test stage completed for ${{ matrix.lambda.name }}"
           # Coverage reports are generated in the test stage
       
-      - name: Build production artifact
+      - name: Build and extract ZIP artifact
         run: |
-          echo "Building production artifact for ${{ matrix.lambda.name }}..."
+          echo "Building and extracting artifact: ${{ matrix.lambda.artifact }}"
+          # Use docker build --output to extract files directly from the artifact stage
+          # This works with FROM scratch stages that can't be run as containers
           docker build \
             --target artifact \
-            -t ${{ matrix.lambda.name }}:artifact \
+            --output type=local,dest=./ \
             -f ${{ matrix.lambda.dockerfile }} \
             ${{ matrix.lambda.path }}
-      
-      - name: Extract ZIP artifact
-        run: |
-          echo "Extracting artifact: ${{ matrix.lambda.artifact }}"
-          container_id=$(docker create ${{ matrix.lambda.name }}:artifact)
-          docker cp $container_id:/${{ matrix.lambda.artifact }} ./${{ matrix.lambda.artifact }}
-          docker rm $container_id
-          ls -lh ./${{ matrix.lambda.artifact }}
+          # The artifact is extracted to the root, move it to current directory with expected name
+          if [ -f ${{ matrix.lambda.artifact }} ]; then
+            echo "Artifact extracted successfully"
+            ls -lh ./${{ matrix.lambda.artifact }}
+          else
+            echo "ERROR: Artifact ${{ matrix.lambda.artifact }} not found after extraction"
+            exit 1
+          fi
       
       - name: Upload Lambda artifact
         uses: actions/upload-artifact@v4
