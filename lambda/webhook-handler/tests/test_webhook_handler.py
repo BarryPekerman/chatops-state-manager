@@ -399,7 +399,7 @@ class TestCallbackMode:
             })
         }
         
-        with patch('webhook_handler.send_telegram_message_env') as mock_send:
+        with patch('webhook_handler.send_telegram_message_direct') as mock_send:
             # Configure mock to return proper response
             mock_send.return_value = {
                 'statusCode': 200,
@@ -459,8 +459,8 @@ class TestErrorHandling:
         }
         
         response = webhook_handler.lambda_handler(event, None)
-        # Should handle gracefully
-        assert response['statusCode'] in [200, 403, 500]
+        # Should handle gracefully - returns 500 for invalid request format
+        assert response['statusCode'] == 500
 
 
 class TestProjectRegistry:

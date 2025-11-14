@@ -18,19 +18,8 @@ repos:
       - id: mixed-line-ending
         args: ['--fix=lf']
 
-  # Terraform linting (using tflint installed by workflow)
-  # Note: tflint --init should be run manually once to set up plugins
-  - repo: local
-    hooks:
-      - id: tflint
-        name: tflint
-        entry: sh -c 'cd terraform && tflint --init >/dev/null 2>&1; tflint --format=default'
-        language: system
-        types: [terraform]
-        pass_filenames: false
-        always_run: false
-
   # Terraform formatting (using terraform installed by workflow)
+  # Note: tflint is run separately in CI workflow, not via pre-commit
   - repo: local
     hooks:
       - id: terraform-fmt

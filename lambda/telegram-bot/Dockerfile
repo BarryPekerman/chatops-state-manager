@@ -40,9 +40,9 @@ RUN echo "Running security scans..." && \
     bandit -r bot.py -f json -o /tmp/bandit-report.json || true && \
     safety check --json || true
 
-# Run unit tests with coverage
+# Run unit tests with coverage (only measure bot.py, exclude dependencies)
 RUN echo "Running unit tests..." && \
-    pytest tests/ -v --cov=. --cov-report=term-missing --cov-report=html --cov-fail-under=70
+    pytest tests/ -v --cov=bot --cov-report=term-missing --cov-report=html --cov-fail-under=70
 
 # Build stage - creates ZIP artifact
 FROM base AS build

@@ -15,7 +15,7 @@
 !/tests/
 !/.gitignore
 !/.pre-commit-config.yaml
-!/gitleaks.toml
+!/.gitleaks.toml
 !/LICENSE
 !/README.md
 

@@ -38,7 +38,9 @@ def mock_secrets():
             })
         )
         
-        yield client
+        # Patch the module-level secrets_client to use the mocked client
+        with patch.object(bot, 'secrets_client', client):
+            yield client
 
 
 @pytest.fixture

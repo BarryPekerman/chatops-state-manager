@@ -31,6 +31,12 @@ jobs:
         run: |
           pip install pre-commit detect-secrets
 
+      - name: Run TFLint
+        run: |
+          cd terraform
+          tflint --init
+          tflint --format=default
+
       - name: Run pre-commit
         run: |
           pre-commit run --all-files
