@@ -69,6 +69,16 @@ __pycache__/
 *.so
 .Python
 
+# Ignore test artifacts
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.hypothesis/
+*.cover
+
 # Ignore IDE files
 .vscode/
 .idea/

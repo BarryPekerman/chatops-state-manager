@@ -6,6 +6,14 @@ import logging
 import boto3
 from typing import Dict, Any
 
+# Common response helper
+def create_response(status_code: int, body: Any) -> Dict[str, Any]:
+    """Helper to create standardized HTTP responses"""
+    return {
+        'statusCode': status_code,
+        'body': json.dumps(body) if isinstance(body, dict) else body
+    }
+
 # Configure logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -50,10 +58,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # Extract message information
         if 'message' not in body:
             logger.warning("No message in webhook body")
-            return {
-                'statusCode': 200,
-                'body': json.dumps({'ok': True})
-            }
+            return create_response(200, {'ok': True})
 
         message = body['message']
         chat_id = message['chat']['id']
@@ -63,18 +68,12 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         authorized_chat_id = os.environ.get('AUTHORIZED_CHAT_ID')
         if str(chat_id) != str(authorized_chat_id):
             logger.warning(f"Unauthorized chat ID: {chat_id}")
-            return {
-                'statusCode': 200,
-                'body': json.dumps({'ok': True})
-            }
+            return create_response(200, {'ok': True})
 
         # Check if it's a command
         if not text.startswith('/'):
             logger.info(f"Non-command message from {chat_id}: {text}")
-            return {
-                'statusCode': 200,
-                'body': json.dumps({'ok': True})
-            }
+            return create_response(200, {'ok': True})
 
         logger.info(f"Processing command from {chat_id}: {text}")
 
@@ -83,20 +82,14 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         
         if not api_gateway_url:
             logger.error("Missing API Gateway URL configuration")
-            return {
-                'statusCode': 500,
-                'body': json.dumps({'error': 'Missing API Gateway URL configuration'})
-            }
+            return create_response(500, {'error': 'Missing API Gateway URL configuration'})
 
         # Get API Gateway key from Secrets Manager
         try:
             api_gateway_key = get_api_gateway_key()
         except Exception as e:
             logger.error(f"Failed to retrieve API Gateway key: {e}")
-            return {
-                'statusCode': 500,
-                'body': json.dumps({'error': 'Failed to retrieve API Gateway key'})
-            }
+            return create_response(500, {'error': 'Failed to retrieve API Gateway key'})
 
         # Prepare payload in Telegram webhook format for main webhook
         # Use the real Telegram update_id from the webhook payload
@@ -141,26 +134,14 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         else:
             logger.error(f"Failed to forward command: {response.status_code} - {response.text}")
 
-        return {
-            'statusCode': 200,
-            'body': json.dumps({'ok': True})
-        }
+        return create_response(200, {'ok': True})
 
     except json.JSONDecodeError as e:
         logger.error(f"JSON decode error: {e}")
-        return {
-            'statusCode': 400,
-            'body': json.dumps({'error': 'Invalid JSON'})
-        }
+        return create_response(400, {'error': 'Invalid JSON'})
     except requests.RequestException as e:
         logger.error(f"Request error: {e}")
-        return {
-            'statusCode': 500,
-            'body': json.dumps({'error': 'Request failed'})
-        }
+        return create_response(500, {'error': 'Request failed'})
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
-        return {
-            'statusCode': 500,
-            'body': json.dumps({'error': 'Internal server error'})
-        }
+        return create_response(500, {'error': 'Internal server error'})

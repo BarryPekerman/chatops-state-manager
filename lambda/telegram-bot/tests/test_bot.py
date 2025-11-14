@@ -396,6 +396,80 @@ class TestLogging:
                 log_calls = [str(call) for call in mock_logger.info.call_args_list]
                 assert any('Forwarding' in str(call) or 'forwarded' in str(call).lower() 
                           for call in log_calls)
+
+
+class TestEdgeCases:
+    """Test edge cases and error scenarios"""
+    
+    def test_missing_text_field(self, mock_env, mock_secrets):
+        """Test message without text field"""
+        event = {
+            'body': json.dumps({
+                'update_id': 123,
+                'message': {
+                    'chat': {'id': 123456789},
+                    'from': {'id': 123456789}
+                    # No text field
+                }
+            })
+        }
+        
+        response = bot.lambda_handler(event, None)
+        assert response['statusCode'] == 200
+    
+    def test_empty_text(self, mock_env, mock_secrets):
+        """Test message with empty text"""
+        event = {
+            'body': json.dumps({
+                'update_id': 123,
+                'message': {
+                    'chat': {'id': 123456789},
+                    'from': {'id': 123456789},
+                    'text': ''
+                }
+            })
+        }
+        
+        response = bot.lambda_handler(event, None)
+        assert response['statusCode'] == 200
+    
+    def test_api_gateway_non_200_response(self, mock_env, mock_secrets, telegram_webhook_event):
+        """Test handling of non-200 API Gateway response"""
+        with patch('bot.requests.post') as mock_post:
+            mock_response = Mock()
+            mock_response.status_code = 500
+            mock_response.text = 'Internal Server Error'
+            mock_post.return_value = mock_response
+            
+            response = bot.lambda_handler(telegram_webhook_event, None)
+            # Should still return 200 (don't fail on API Gateway errors)
+            assert response['statusCode'] == 200
+    
+    def test_update_id_generation(self, mock_env, mock_secrets):
+        """Test update_id generation when missing"""
+        event = {
+            'body': json.dumps({
+                # No update_id
+                'message': {
+                    'chat': {'id': 123456789},
+                    'from': {'id': 123456789},
+                    'text': '/status'
+                }
+            })
+        }
+        
+        with patch('bot.requests.post') as mock_post, \
+             patch('time.time', return_value=1234567890.0):
+            mock_response = Mock()
+            mock_response.status_code = 200
+            mock_post.return_value = mock_response
+            
+            bot.lambda_handler(event, None)
+            
+            call_args = mock_post.call_args
+            payload = call_args[1]['json']
+            assert 'update_id' in payload
+            assert payload['update_id'] == 1234567890000  # time.time() * 1000
     
     def test_logs_errors(self, mock_env, mock_secrets, telegram_webhook_event):
         """Test errors are logged"""

@@ -28,8 +28,3 @@ if [[ -f "lambda_function.zip" ]]; then
 else
     echo "Warning: lambda_function.zip not found"
 fi
-
-# Build output processor
-echo ""
-echo "🔨 Building output processor Lambda..."
-./build_output_processor.sh

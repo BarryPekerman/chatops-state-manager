@@ -1,5 +1,5 @@
 # Dockerfile for telegram-bot Lambda
-FROM python:3.11-slim as base
+FROM python:3.11-slim AS base
 
 WORKDIR /opt/app
 
@@ -17,7 +17,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt -t .
 
 # Test stage - runs unit tests and security scans
-FROM base as test
+FROM base AS test
 
 # Set AWS region before importing modules (required for boto3)
 ENV AWS_REGION=us-east-1
@@ -45,13 +45,13 @@ RUN echo "Running unit tests..." && \
     pytest tests/ -v --cov=. --cov-report=term-missing --cov-report=html --cov-fail-under=70
 
 # Build stage - creates ZIP artifact
-FROM base as build
+FROM base AS build
 
 # Remove test files and create clean ZIP
 RUN zip -r /tmp/telegram-bot.zip . -x "*.pyc" "__pycache__/*" "tests/*" "*.dist-info/*"
 
 # Runtime stage - for local testing with docker-compose
-FROM python:3.11-slim as runtime
+FROM python:3.11-slim AS runtime
 
 WORKDIR /var/task
 
@@ -64,5 +64,5 @@ ENV PYTHONUNBUFFERED=1
 CMD ["bot.lambda_handler"]
 
 # Artifact stage - for CI/CD artifact extraction
-FROM scratch as artifact
+FROM scratch AS artifact
 COPY --from=build /tmp/telegram-bot.zip /

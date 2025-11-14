@@ -4,8 +4,17 @@ import requests
 import logging
 import re
 import boto3
+import traceback
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
+
+# Common response helper
+def create_response(status_code: int, body: Any) -> Dict[str, Any]:
+    """Helper to create standardized HTTP responses"""
+    return {
+        'statusCode': status_code,
+        'body': json.dumps(body) if isinstance(body, dict) else body
+    }
 
 # Configure logging
 logger = logging.getLogger()
@@ -159,23 +168,16 @@ class TerraformOutputProcessor:
             else:
                 results = self.send_telegram_messages(chat_id, processed_messages)
 
-            return {
-                'statusCode': 200,
-                'body': json.dumps({
-                    'success': True,
-                    'messages_sent': len(results),
-                    'processing_method': processing_method
-                })
-            }
+            return create_response(200, {
+                'success': True,
+                'messages_sent': len(results),
+                'processing_method': processing_method
+            })
 
         except Exception as e:
-            import traceback
             logger.error(f"Error processing output: {e}")
             logger.error(f"Full traceback: {traceback.format_exc()}")
-            return {
-                'statusCode': 500,
-                'body': json.dumps({'error': 'Processing failed'})
-            }
+            return create_response(500, {'error': 'Processing failed'})
 
     def sanitize_output(self, text: str) -> str:
         """Sanitize output by removing secrets and cleaning up formatting"""
@@ -302,7 +304,6 @@ class TerraformOutputProcessor:
             return summary
             
         except Exception as e:
-            import traceback
             logger.error(f"Bedrock invocation failed: {str(e)}")
             logger.error(f"Exception type: {type(e).__name__}")
             logger.error(f"Full traceback: {traceback.format_exc()}")
@@ -853,10 +854,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
         # Validate required parameters
         if not all([raw_output, command, chat_id]):
-            return {
-                'statusCode': 400,
-                'body': json.dumps({'error': 'Missing required parameters'})
-            }
+            return create_response(400, {'error': 'Missing required parameters'})
 
         # Create processor configuration
         config = ProcessingConfig(
@@ -873,7 +871,4 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
     except Exception as e:
         logger.error(f"Lambda handler error: {e}")
-        return {
-            'statusCode': 500,
-            'body': json.dumps({'error': 'Internal server error'})
-        }
+        return create_response(500, {'error': 'Internal server error'})
