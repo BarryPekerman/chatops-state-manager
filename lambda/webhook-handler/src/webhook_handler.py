@@ -245,87 +245,25 @@ def trigger_github_workflow(command, chat_id, project=None, token=None):
         token: Token for confirm_destroy (if specified)
     """
     try:
-        # Wrap the entire function in a recursion-safe handler
-        try:
-            github_token = get_github_token()
-            github_owner = os.environ.get('GITHUB_OWNER')
-            github_repo = os.environ.get('GITHUB_REPO')
+        github_token = get_github_token()
+        github_owner = os.environ.get('GITHUB_OWNER')
+        github_repo = os.environ.get('GITHUB_REPO')
 
-            if not all([github_token, github_owner, github_repo]):
-                raise ValueError("Missing GitHub configuration")
+        if not all([github_token, github_owner, github_repo]):
+            raise ValueError("Missing GitHub configuration")
 
-            # Ensure project is a simple value (string or None) to avoid recursion issues
-            # Use the absolute safest approach: default to None, only use if clearly a string
-            project_value = None
-            # Wrap everything in try-except to catch any recursion at any point
-            try:
-                # Use the safest possible check: identity comparison with None
-                # This should never cause recursion as 'is' uses object identity
-                if project is not None:
-                    # Project exists, but we need to verify it's safe to use
-                    # Use try-except around any operation that touches project
-                    try:
-                        # Try the safest string check: compare class identity
-                        # Access __class__ in a try-except to catch any recursion
-                        project_class = None
-                        try:
-                            project_class = project.__class__
-                        except (RecursionError, Exception):
-                            # If accessing __class__ causes recursion, give up
-                            project_value = None
-                            project_class = None
-                        
-                        # Only proceed if we got the class successfully
-                        if project_class is not None:
-                            # Use identity comparison (is) - safest comparison
-                            if project_class is str:
-                                # It's definitely a string, safe to use
-                                project_value = project
-                            # If it's not a string, leave project_value as None
-                    except (RecursionError, Exception):
-                        # If anything fails, just use None
-                        project_value = None
-                # If project is None, project_value stays None (which is correct)
-            except (RecursionError, Exception):
-                # If even the outer try fails, use None
-                project_value = None
-        except RecursionError:
-            # If recursion happens early, use safe defaults
-            project_value = None
-            github_token = get_github_token()
-            github_owner = os.environ.get('GITHUB_OWNER')
-            github_repo = os.environ.get('GITHUB_REPO')
-            
-            if not all([github_token, github_owner, github_repo]):
-                raise ValueError("Missing GitHub configuration")
+        # Convert project to string if provided
+        project_value = str(project) if project is not None else None
         
         payload = {
             'event_type': 'telegram_command',
             'client_payload': {'command': command}
         }
         
-        # Safely add project to payload if it exists
-        # Use identity check (is not None) and length check to avoid comparison recursion
-        try:
-            if project_value is not None:
-                # Check length instead of comparing to empty string
-                try:
-                    if len(project_value) > 0:
-                        payload['client_payload']['project'] = project_value
-                except (RecursionError, Exception):
-                    # If length check causes issues, skip adding project
-                    pass
-        except (RecursionError, Exception):
-            # If checking project_value causes issues, skip it
-            pass
-        
-        # Safely add token to payload if it exists
-        try:
-            if token is not None:
-                payload['client_payload']['token'] = str(token) if token is not None else None
-        except (RecursionError, Exception):
-            # If processing token causes issues, skip it
-            pass
+        if project_value:
+            payload['client_payload']['project'] = project_value
+        if token:
+            payload['client_payload']['token'] = str(token) if token is not None else None
 
         url = f"https://api.github.com/repos/{github_owner}/{github_repo}/dispatches"
         headers = {
@@ -337,53 +275,22 @@ def trigger_github_workflow(command, chat_id, project=None, token=None):
         response = requests.post(url, headers=headers, json=payload)
         response.raise_for_status()
 
-        # Safely log and send feedback, catching any recursion errors
-        try:
-            logger.info(f"Successfully triggered GitHub workflow for command: {command}, project: {project_value}")
-        except (RecursionError, Exception):
-            logger.info("Successfully triggered GitHub workflow")
-        
-        try:
-            send_telegram_feedback(chat_id, command, project_value)
-        except (RecursionError, Exception):
-            # If feedback fails, continue anyway
-            pass
+        logger.info(f"Successfully triggered GitHub workflow for command: {command}, project: {project_value}")
+        send_telegram_feedback(chat_id, command, project_value)
 
-        # Safely create response
-        try:
-            return create_response(200, {
-                'message': f'Command {command} triggered successfully',
-                'command': command,
-                'project': project_value
-            })
-        except (RecursionError, Exception):
-            # If creating response fails, return a simple success message
-            return create_response(200, {
-                'message': 'Command triggered successfully',
-                'command': command
-            })
+        return create_response(200, {
+            'message': f'Command {command} triggered successfully',
+            'command': command,
+            'project': project_value
+        })
 
     except requests.exceptions.RequestException as e:
         error_msg = str(e) if e else 'Unknown error'
         logger.error(f"GitHub API error: {error_msg}")
         return create_response(500, {'error': 'Failed to trigger GitHub workflow'})
-    except RecursionError:
-        # Special handling for recursion errors - don't try to format anything
-        logger.error("Error triggering workflow: RecursionError occurred")
-        return create_response(500, {'error': 'Internal error'})
     except Exception as e:
-        # Safely convert exception to string to avoid recursion issues
-        try:
-            error_msg = str(e) if e else 'Unknown error'
-        except RecursionError:
-            error_msg = 'RecursionError (failed to format exception)'
-        except Exception:
-            error_msg = 'Internal error (failed to format exception)'
-        try:
-            logger.error(f"Error triggering workflow: {error_msg}")
-        except RecursionError:
-            # Even logging can cause recursion, so use a simple message
-            logger.error("Error triggering workflow: RecursionError in logging")
+        error_msg = str(e) if e else 'Unknown error'
+        logger.error(f"Error triggering workflow: {error_msg}")
         return create_response(500, {'error': 'Internal error'})
 
 def send_telegram_feedback(chat_id, command, project=None):
@@ -395,50 +302,12 @@ def send_telegram_feedback(chat_id, command, project=None):
             return
 
         # Prepare feedback message based on command
-        # Safely handle project parameter to avoid recursion
-        project_text = ""
-        project_str = ""
-        try:
-            # Safely check if project exists and is not None
-            if project is not None:
-                try:
-                    # Safely convert to string for use in f-string
-                    project_str = str(project) if project is not None else ""
-                    # Use length check instead of truthiness to avoid comparison recursion
-                    try:
-                        if len(project_str) > 0:
-                            project_text = f" for project: `{project_str}`"
-                    except (RecursionError, Exception):
-                        # If length check causes issues, skip it
-                        project_text = ""
-                except (RecursionError, Exception):
-                    # If converting project causes issues, skip it
-                    project_text = ""
-                    project_str = ""
-        except (RecursionError, Exception):
-            # If checking project causes issues, skip it
-            project_text = ""
-            project_str = ""
+        project_text = f" for project: `{project}`" if project else ""
         
         if command == 'status':
             message = f"🔍 **Status Check Initiated**{project_text}\n\nChecking Terraform state...\n\n⏳ This may take a few moments."
         elif command == 'destroy':
-            # Use project_str instead of project to avoid recursion
-            # Use length check instead of truthiness check
-            has_project = False
-            try:
-                if project_str is not None:
-                    try:
-                        has_project = len(project_str) > 0
-                    except (RecursionError, Exception):
-                        has_project = False
-            except (RecursionError, Exception):
-                has_project = False
-            if has_project:
-                destroy_msg = f"💥 **Destroy Plan Created**{project_text}\n\n⚠️ **Review the plan carefully!**\n\nTo confirm destruction, send:\n`/confirm_destroy {project_str}`"
-            else:
-                destroy_msg = f"💥 **Destroy Plan Created**{project_text}\n\n⚠️ **Review the plan carefully!**\n\nTo confirm destruction, send:\n`/confirm_destroy`"
-            message = destroy_msg
+            message = f"💥 **Destroy Plan Created**{project_text}\n\n⚠️ **Review the plan carefully!**\n\nTo confirm destruction, send:\n`/confirm_destroy {project}`" if project else f"💥 **Destroy Plan Created**{project_text}\n\n⚠️ **Review the plan carefully!**\n\nTo confirm destruction, send:\n`/confirm_destroy`"
         elif command == 'confirm_destroy':
             message = f"🚀 **Destroy Confirmed**{project_text}\n\n💥 **Executing destruction...**\n\n⏳ This may take several minutes."
         else:
