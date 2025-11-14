@@ -1,0 +1,10 @@
+pytest==7.4.3
+pytest-timeout==2.2.0
+requests==2.31.0
+boto3==1.34.10
+moto[secretsmanager]==4.2.10
+
+
+
+
+
