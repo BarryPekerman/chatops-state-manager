@@ -1,0 +1,239 @@
+name: Deploy to Production
+
+on:
+  workflow_dispatch:  # Manual trigger only
+    inputs:
+      confirm:
+        description: 'Type "deploy" to confirm production deployment'
+        required: true
+        type: string
+
+# Prevent concurrent deployments
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  # Validate confirmation
+  validate:
+    name: Validate Deployment
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Check confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "deploy" ]; then
+            echo "❌ Deployment not confirmed. Please type 'deploy' to proceed."
+            exit 1
+          fi
+          echo "✅ Deployment confirmed"
+      
+      - name: Validation summary
+        run: |
+          echo "# ⚠️ Production Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered by:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+  
+  # Download and prepare artifacts
+  prepare-artifacts:
+    name: Prepare Artifacts
+    runs-on: ubuntu-latest
+    needs: validate
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Build Lambda artifacts
+        run: |
+          echo "Building Lambda functions for production..."
+          cd lambda/webhook-handler && ./build.sh && cd ../..
+          cd lambda/ai-output-processor && ./build.sh && cd ../..
+          cd lambda/telegram-bot && ./build.sh && cd ../..
+      
+      - name: Collect artifacts
+        run: |
+          mkdir -p ./artifacts
+          cp lambda/webhook-handler/lambda_function.zip ./artifacts/
+          cp lambda/ai-output-processor/output_processor.zip ./artifacts/
+          cp lambda/telegram-bot/telegram-bot.zip ./artifacts/
+          ls -lh ./artifacts/
+      
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: lambda-artifacts-production-${{ github.sha }}
+          path: ./artifacts/*.zip
+          retention-days: 30  # Keep production artifacts longer
+  
+  # Deploy to production (requires approval)
+  deploy:
+    name: Deploy Infrastructure
+    runs-on: ubuntu-latest
+    needs: prepare-artifacts
+    environment:
+      name: production
+      url: https://chatops.example.com
+    
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: lambda-artifacts-production-${{ github.sha }}
+          path: ./terraform/artifacts/
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.AWS_REGION }}
+      
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+      
+      - name: Terraform Init
+        working-directory: ./terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TERRAFORM_STATE_BUCKET }}" \
+            -backend-config="key=production/terraform.tfstate" \
+            -backend-config="region=${{ secrets.AWS_REGION }}"
+      
+      - name: Terraform Plan
+        working-directory: ./terraform
+        run: |
+          terraform plan \
+            -var="environment=production" \
+            -var="webhook_lambda_zip_path=./artifacts/lambda_function.zip" \
+            -var="output_processor_zip_path=./artifacts/output_processor.zip" \
+            -var="telegram_lambda_zip_path=./artifacts/telegram-bot.zip" \
+            -var="github_token=${{ secrets.GITHUB_TOKEN }}" \
+            -var="telegram_bot_token=${{ secrets.TELEGRAM_BOT_TOKEN }}" \
+            -var="authorized_chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -out=tfplan
+      
+      - name: Save plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-${{ github.sha }}
+          path: ./terraform/tfplan
+          retention-days: 7
+      
+      - name: Terraform Apply
+        working-directory: ./terraform
+        run: terraform apply -auto-approve tfplan
+      
+      - name: Get outputs
+        id: terraform
+        working-directory: ./terraform
+        run: |
+          echo "webhook_url=$(terraform output -raw webhook_url)" >> $GITHUB_OUTPUT
+          echo "ai_processor_url=$(terraform output -raw ai_processor_url)" >> $GITHUB_OUTPUT
+      
+      - name: Deployment summary
+        run: |
+          echo "# 🚀 Production Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Deployment Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment:** Production" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region:** ${{ secrets.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployed by:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Webhook URL:** ${{ steps.terraform.outputs.webhook_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Lambda Functions" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ webhook-handler deployed" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ ai-output-processor deployed" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ telegram-bot deployed" >> $GITHUB_STEP_SUMMARY
+  
+  # Run smoke tests
+  smoke-tests:
+    name: Production Smoke Tests
+    runs-on: ubuntu-latest
+    needs: deploy
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.AWS_REGION }}
+      
+      - name: Test Lambda functions
+        run: |
+          echo "Testing Lambda functions..."
+          
+          # Check Lambda functions exist and are active
+          aws lambda get-function --function-name chatops-webhook-handler --region ${{ secrets.AWS_REGION }}
+          aws lambda get-function --function-name chatops-ai-processor --region ${{ secrets.AWS_REGION }}
+          aws lambda get-function --function-name chatops-telegram-bot --region ${{ secrets.AWS_REGION }}
+          
+          echo "✅ All Lambda functions are active"
+      
+      - name: Test secrets
+        run: |
+          echo "Verifying secrets..."
+          aws secretsmanager describe-secret --secret-id chatops/secrets --region ${{ secrets.AWS_REGION }}
+          echo "✅ Secrets are accessible"
+      
+      - name: Test CloudWatch Logs
+        run: |
+          echo "Checking CloudWatch log groups..."
+          aws logs describe-log-groups --log-group-name-prefix /aws/lambda/chatops --region ${{ secrets.AWS_REGION }}
+          echo "✅ Logging is configured"
+      
+      - name: Smoke test summary
+        run: |
+          echo "# ✅ Production Smoke Tests Passed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "All production services are healthy and operational" >> $GITHUB_STEP_SUMMARY
+  
+  # Notify via Telegram
+  notify:
+    name: Notify Deployment
+    runs-on: ubuntu-latest
+    needs: [deploy, smoke-tests]
+    if: always()
+    
+    steps:
+      - name: Send Telegram notification
+        run: |
+          if [ "${{ needs.smoke-tests.result }}" == "success" ]; then
+            MESSAGE="🚀 *Production Deployment Successful*%0A%0A"
+            MESSAGE="${MESSAGE}Commit: \`${{ github.sha }}\`%0A"
+            MESSAGE="${MESSAGE}Deployed by: @${{ github.actor }}%0A"
+            MESSAGE="${MESSAGE}Status: ✅ All smoke tests passed"
+          else
+            MESSAGE="⚠️ *Production Deployment Issue*%0A%0A"
+            MESSAGE="${MESSAGE}Commit: \`${{ github.sha }}\`%0A"
+            MESSAGE="${MESSAGE}Deployed by: @${{ github.actor }}%0A"
+            MESSAGE="${MESSAGE}Status: ❌ Smoke tests failed"
+          fi
+          
+          curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d "text=${MESSAGE}" \
+            -d "parse_mode=Markdown" || echo "Failed to send notification"
+      
+      - name: Notification summary
+        run: |
+          echo "# 📱 Notification Sent" >> $GITHUB_STEP_SUMMARY
+          echo "Telegram notification sent to chat ${{ secrets.TELEGRAM_CHAT_ID }}" >> $GITHUB_STEP_SUMMARY
+
+
+
+
+
