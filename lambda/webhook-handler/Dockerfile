@@ -20,6 +20,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 FROM base as test
 
 # Set AWS region before importing modules (required for boto3)
+ENV AWS_REGION=us-east-1
 ENV AWS_DEFAULT_REGION=us-east-1
 
 # Install test and security dependencies
@@ -29,6 +30,7 @@ RUN pip install --no-cache-dir \
     pytest-mock==3.12.0 \
     moto[secretsmanager]==4.2.10 \
     bandit==1.7.5 \
+    pbr \
     safety==2.3.5
 
 # Copy test files

@@ -26,6 +26,7 @@ RUN pip install --no-cache-dir \
     pytest-mock==3.12.0 \
     moto[secretsmanager]==4.2.10 \
     bandit==1.7.5 \
+    pbr \
     safety==2.3.5
 
 # Copy test files
@@ -37,6 +38,8 @@ RUN echo "Running security scans..." && \
     safety check --json || true
 
 # Run unit tests with coverage
+# Set AWS_REGION before running tests to avoid NoRegionError during module import
+ENV AWS_REGION=us-east-1
 RUN echo "Running unit tests..." && \
     pytest tests/ -v --cov=. --cov-report=term-missing --cov-report=html --cov-fail-under=70
 

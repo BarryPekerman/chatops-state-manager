@@ -11,7 +11,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 # Initialize AWS Secrets Manager client
-secrets_client = boto3.client('secretsmanager')
+secrets_client = boto3.client('secretsmanager', region_name=os.environ.get('AWS_REGION', 'eu-west-1'))
 
 def get_secrets():
     """

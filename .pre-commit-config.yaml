@@ -1,0 +1,76 @@
+# Pre-commit hooks configuration
+# See https://pre-commit.com for more information
+
+repos:
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-toml
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+
+  # Terraform linting
+  - repo: https://github.com/terraform-linters/tflint
+    rev: v0.59.1
+    hooks:
+      - id: tflint
+        args:
+          - --init
+          - --format=default
+        files: \.tf$
+
+  # Terraform formatting (using terraform installed by workflow)
+  - repo: local
+    hooks:
+      - id: terraform-fmt
+        name: terraform fmt
+        entry: terraform fmt -check -diff
+        language: system
+        types: [terraform]
+        pass_filenames: false
+        always_run: false
+
+  # Secret detection (using detect-secrets installed by workflow)
+  # Note: This will scan all files. Create .secrets.baseline manually if needed:
+  #   detect-secrets scan > .secrets.baseline
+  - repo: local
+    hooks:
+      - id: detect-secrets
+        name: detect-secrets
+        entry: detect-secrets scan --force-use-all-plugins
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [commit]
+
+  # Python formatting (optional - can be enabled if needed)
+  # - repo: https://github.com/psf/black
+  #   rev: 24.10.0
+  #   hooks:
+  #     - id: black
+  #       language_version: python3
+  #       files: \.py$
+
+# Exclude patterns
+exclude: |
+  (?x)^(
+      \.terraform/|
+      \.venv/|
+      venv/|
+      __pycache__/|
+      \.git/|
+      \.terraform\.lock\.hcl|
+      terraform\.tfstate.*|
+      \.zip$|
+      \.tar\.gz$
+  )
+

@@ -10,14 +10,14 @@ import boto3
 from urllib.parse import parse_qs
 
 # Initialize Lambda client for AI processor invocation
-lambda_client = boto3.client('lambda')
+lambda_client = boto3.client('lambda', region_name=os.environ.get('AWS_REGION') or os.environ.get('AWS_DEFAULT_REGION', 'eu-west-1'))
 
 # Configure logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 # Initialize AWS Secrets Manager client
-secrets_client = boto3.client('secretsmanager')
+secrets_client = boto3.client('secretsmanager', region_name=os.environ.get('AWS_REGION') or os.environ.get('AWS_DEFAULT_REGION', 'eu-west-1'))
 
 def get_secrets():
     """
