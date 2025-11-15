@@ -3,7 +3,9 @@ name: pre-commit
 on:
   pull_request:
   push:
-    branches: [ main ]
+    branches:
+      - main
+      - dev
 
 jobs:
   pre-commit:
@@ -20,26 +22,38 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.6.0
+          terraform_version: 1.13.3
+          terraform_wrapper: true
 
       - name: Install TFLint
         run: |
           curl -s https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
           # TFLint is already installed to /usr/local/bin/ by the script
 
-      - name: Install pre-commit
+      - name: Install pre-commit and detect-secrets
+        run: pip install pre-commit detect-secrets
+      - name: Run pre-commit hooks
+        run: pre-commit run --all-files
+      - name: Run TFLint on terraform/
+        if: hashFiles('terraform/**/*.tf') != ''
         run: |
-          pip install pre-commit detect-secrets
-
-      - name: Run TFLint
+          if [ -d "terraform" ]; then
+            cd terraform
+            tflint --init
+            tflint --format=default
+          else
+            echo "Skipping tflint on terraform/ as directory does not exist."
+          fi
+      - name: Run TFLint on terraform-config/
+        if: hashFiles('terraform-config/**/*.tf') != ''
         run: |
-          cd terraform
-          tflint --init
-          tflint --format=default
-
-      - name: Run pre-commit
-        run: |
-          pre-commit run --all-files
+          if [ -d "terraform-config" ]; then
+            cd terraform-config
+            tflint --init
+            tflint --format=default
+          else
+            echo "Skipping tflint on terraform-config/ as directory does not exist."
+          fi
 
   gitleaks:
     runs-on: ubuntu-latest
