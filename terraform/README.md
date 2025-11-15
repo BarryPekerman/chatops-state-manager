@@ -44,7 +44,7 @@ terraform apply
 This configuration uses the `terraform-aws-chatops` module from the Terraform Registry:
 ```hcl
 source  = "BarryPekerman/chatops/aws"
-version = "0.1.1"
+version = "0.1.0"
 ```
 
 The module is published at: https://registry.terraform.io/modules/BarryPekerman/chatops/aws
@@ -137,7 +137,7 @@ All secrets should be:
 If you get a "module not found" error:
 1. Ensure you have internet access (module is downloaded from Terraform Registry)
 2. Run `terraform init` to download the module
-3. Check that the version `0.1.1` is available in the registry
+3. Check that the version `0.1.0` is available in the registry
 4. Verify your Terraform version is >= 1.0 (required for registry modules)
 
 ### Lambda ZIP Files Missing

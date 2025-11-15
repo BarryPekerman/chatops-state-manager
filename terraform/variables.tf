@@ -48,12 +48,6 @@ variable "s3_bucket_arn" {
   type        = string
 }
 
-variable "terraform_backend_bucket" {
-  description = "S3 bucket name for Terraform backend (extracted from s3_bucket_arn)"
-  type        = string
-  default     = ""
-}
-
 variable "webhook_lambda_zip_path" {
   description = "Path to webhook handler Lambda ZIP file"
   type        = string
@@ -118,38 +112,8 @@ variable "log_retention_days" {
   default     = 7
 }
 
-variable "allowed_cors_origins" {
-  description = "List of allowed CORS origins (default: empty, not needed for Telegram webhooks)"
-  type        = list(string)
-  default     = []
-}
-
-variable "resource_tag_key" {
-  description = "Tag key used to identify resources managed by ChatOps (default: ChatOpsManaged)"
-  type        = string
-  default     = "ChatOpsManaged"
-}
-
 variable "resource_tag_value" {
   description = "Tag value for ChatOps-managed resources (default: true)"
   type        = string
   default     = "true"
-}
-
-variable "environment_tag_key" {
-  description = "Tag key for environment (default: Environment)"
-  type        = string
-  default     = "Environment"
-}
-
-variable "environment_tag_value" {
-  description = "Optional environment tag value to filter resources (null = any environment)"
-  type        = string
-  default     = null
-}
-
-variable "use_api_gateway" {
-  description = "Whether to expose AI processor via API Gateway (default: true to preserve existing deployment, false uses direct Lambda invoke)"
-  type        = bool
-  default     = true
 }
