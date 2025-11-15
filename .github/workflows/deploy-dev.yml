@@ -1,5 +1,9 @@
 name: Deploy to Dev
 
+# Execution flow:
+# 1. Push to dev branch (with lambda/** changes) → Lambda CI/CD triggers
+# 2. Lambda CI/CD completes successfully → This workflow triggers via workflow_run
+# 3. This workflow builds artifacts and deploys to dev
 on:
   # Trigger after Lambda CI/CD completes successfully
   workflow_run:
@@ -8,15 +12,7 @@ on:
       - completed
     branches:
       - dev
-  # Also trigger on push to dev (will check CI status)
-  push:
-    branches:
-      - dev
-    paths:
-      - 'lambda/**'
-      - 'terraform/**'
-      - '.github/workflows/deploy-dev.yml'
-  # Allow manual triggers
+  # Allow manual triggers (will build artifacts if needed)
   workflow_dispatch:
     inputs:
       skip_ci_check:
@@ -35,54 +31,22 @@ jobs:
   check-ci-status:
     name: Check CI Status
     runs-on: ubuntu-latest
-    # Only proceed if CI succeeded OR manual dispatch with skip flag OR push (will check CI status)
+    # Only proceed if CI succeeded OR manual dispatch
     if: |
       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
-      (github.event_name == 'workflow_dispatch' && (inputs.skip_ci_check == 'true' || inputs.skip_ci_check == true)) ||
-      github.event_name == 'push'
+      github.event_name == 'workflow_dispatch'
     
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Install jq (if needed)
-        run: |
-          if ! command -v jq &> /dev/null; then
-            sudo apt-get update && sudo apt-get install -y jq
-          else
-            echo "jq is already installed"
-          fi
-      
       - name: Verify CI passed
         run: |
           if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            echo "✅ Lambda CI/CD completed successfully (workflow_run trigger)"
+            echo "✅ Lambda CI/CD completed successfully"
             echo "CI workflow run: ${{ github.event.workflow_run.html_url }}"
             echo "CI workflow SHA: ${{ github.event.workflow_run.head_sha }}"
-          elif [ "${{ github.event_name }}" = "push" ]; then
-            echo "🔍 Checking if Lambda CI/CD has passed for commit ${{ github.sha }}"
-            # Wait a bit for CI to potentially complete
-            sleep 10
-            # Check CI status using GitHub API
-            CI_STATUS=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/${{ github.repository }}/actions/runs?branch=dev&head_sha=${{ github.sha }}&per_page=5" | \
-              jq -r '.workflow_runs[] | select(.name == "Lambda CI/CD") | .conclusion' | head -1)
-            
-            if [ "$CI_STATUS" = "success" ]; then
-              echo "✅ Lambda CI/CD has passed for this commit"
-            elif [ "$CI_STATUS" = "failure" ] || [ "$CI_STATUS" = "cancelled" ]; then
-              echo "❌ Lambda CI/CD has failed or was cancelled for this commit"
-              echo "⚠️ Proceeding anyway, but deployment may fail"
-            elif [ -z "$CI_STATUS" ]; then
-              echo "⚠️ Lambda CI/CD status not found yet - it may still be running"
-              echo "⚠️ Proceeding, but ensure CI passes before deploying to production"
-            else
-              echo "⚠️ Lambda CI/CD status: $CI_STATUS"
-              echo "⚠️ Proceeding, but ensure CI passes before deploying"
-            fi
+            echo "CI workflow conclusion: ${{ github.event.workflow_run.conclusion }}"
           else
-            echo "⚠️ Manual trigger with CI check skipped"
-            echo "⚠️ Make sure Lambda CI/CD has completed for this commit"
+            echo "⚠️ Manual trigger - artifacts will be built if not found"
+            echo "⚠️ Make sure Lambda CI/CD has completed for this commit if you want to use pre-built artifacts"
           fi
   
   # Download artifacts from CI build
@@ -90,7 +54,7 @@ jobs:
     name: Prepare Artifacts
     runs-on: ubuntu-latest
     needs: check-ci-status
-    # Use the workflow_run SHA if available, otherwise use current SHA
+    # Use the workflow_run SHA if available (from CI), otherwise use current SHA (manual dispatch)
     env:
       WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
     
@@ -100,53 +64,42 @@ jobs:
         with:
           ref: ${{ env.WORKFLOW_SHA }}
       
-      - name: Download webhook-handler artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: webhook-handler-${{ env.WORKFLOW_SHA }}
-          path: ./artifacts/
-        continue-on-error: true
+      - name: Create artifacts directory
+        run: mkdir -p ./artifacts/
       
-      - name: Download ai-processor artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ai-output-processor-${{ env.WORKFLOW_SHA }}
-          path: ./artifacts/
-        continue-on-error: true
-      
-      - name: Download telegram-bot artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: telegram-bot-${{ env.WORKFLOW_SHA }}
-          path: ./artifacts/
-        continue-on-error: true
-      
-      - name: Build artifacts if not found
+      - name: Build all artifacts
+        # Always build artifacts - we have the code at the correct commit SHA from workflow_run
+        # This ensures artifacts are available even if CI artifacts aren't accessible
         run: |
-          # Create artifacts directory if it doesn't exist
-          mkdir -p ./artifacts/
+          echo "Building Lambda function artifacts for commit ${{ env.WORKFLOW_SHA }}..."
           
-          if [ ! -f ./artifacts/lambda_function.zip ]; then
-            echo "Building webhook-handler..."
-            cd lambda/webhook-handler && ./build.sh && mv lambda_function.zip ../../artifacts/
-          fi
-          if [ ! -f ./artifacts/output_processor.zip ]; then
-            echo "Building ai-output-processor..."
-            cd lambda/ai-output-processor && ./build.sh && mv output_processor.zip ../../artifacts/
-          fi
-          if [ ! -f ./artifacts/telegram-bot.zip ]; then
-            echo "Building telegram-bot..."
-            cd lambda/telegram-bot && ./build.sh && mv telegram-bot.zip ../../artifacts/
-          fi
+          echo "Building webhook-handler..."
+          cd lambda/webhook-handler && ./build.sh && mv lambda_function.zip ../../artifacts/ && cd ../.. || exit 1
+          
+          echo "Building ai-output-processor..."
+          cd lambda/ai-output-processor && ./build.sh && mv output_processor.zip ../../artifacts/ && cd ../.. || exit 1
+          
+          echo "Building telegram-bot..."
+          cd lambda/telegram-bot && ./build.sh && mv telegram-bot.zip ../../artifacts/ && cd ../.. || exit 1
+          
+          echo "✅ All artifacts built successfully"
       
       - name: Verify artifacts exist
         run: |
-          echo "Checking for artifacts..."
+          echo "Verifying all artifacts exist..."
           ls -lh ./artifacts/ || echo "No artifacts directory found"
-          if [ ! -f ./artifacts/lambda_function.zip ] && [ ! -f ./artifacts/output_processor.zip ] && [ ! -f ./artifacts/telegram-bot.zip ]; then
-            echo "ERROR: No artifacts found after build fallback!"
+          
+          MISSING=0
+          [ ! -f ./artifacts/lambda_function.zip ] && echo "❌ Missing: lambda_function.zip" && MISSING=$((MISSING + 1))
+          [ ! -f ./artifacts/output_processor.zip ] && echo "❌ Missing: output_processor.zip" && MISSING=$((MISSING + 1))
+          [ ! -f ./artifacts/telegram-bot.zip ] && echo "❌ Missing: telegram-bot.zip" && MISSING=$((MISSING + 1))
+          
+          if [ $MISSING -gt 0 ]; then
+            echo "ERROR: $MISSING artifact(s) missing after build!"
             exit 1
           fi
+          
+          echo "✅ All artifacts present"
       
       - name: Upload combined artifacts
         uses: actions/upload-artifact@v4
@@ -178,6 +131,7 @@ jobs:
         with:
           name: lambda-artifacts-dev-${{ github.event.workflow_run.head_sha || github.sha }}
           path: ./terraform/artifacts/
+          if-no-files-found: error
       
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4

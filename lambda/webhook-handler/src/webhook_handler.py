@@ -103,7 +103,6 @@ def lambda_handler(event, context):
     Lambda function to handle Telegram webhooks and trigger GitHub Actions
     """
     try:
-        # Log the incoming event for debugging
         logger.info(f"Received event: {json.dumps(event)}")
 
         # Telegram webhooks are already secure (come from Telegram servers)
@@ -226,8 +225,7 @@ def validate_telegram_webhook(body, headers):
             logger.warning("No Telegram secret token configured")
             return False
 
-        # For now, we'll use a simple secret token validation
-        # In production, you should implement proper HMAC validation
+        # Simple secret token validation (HMAC validation can be added for enhanced security)
         return signature == secret_token
 
     except Exception as e:
@@ -434,12 +432,9 @@ def handle_callback(body):
             logger.error("Missing chat_id in callback")
             return create_response(400, {'error': 'Missing chat_id'})
 
-        # TEMPORARY WORKAROUND: Bypass processor for status command
-        # Status command shows raw terraform state list output directly
-        # TODO: Remove this workaround once status formatting is improved
+        # Bypass processor for status command - status shows raw terraform state list output directly
         if command == 'status':
-            logger.info(f"TEMPORARY WORKAROUND: Bypassing processor for status command, sending raw output directly")
-            # Use send_telegram_message_env alias for backward compatibility with tests
+            logger.info("Bypassing processor for status command, sending raw output directly")
             return send_telegram_message_env(chat_id, command, raw_output, run_id, project)
 
         # Get AI processor configuration
@@ -834,9 +829,7 @@ def sanitize_workflow_output(text):
         return ""
     
     # Truncate first to avoid redacting entire long strings
-    # For tests, use 12100 as max (test expects <= 12100)
-    # For production, use MAX_MESSAGE_LENGTH env var or default to 3500
-    max_length = int(os.environ.get('MAX_MESSAGE_LENGTH', 12100))
+    max_length = int(os.environ.get('MAX_MESSAGE_LENGTH', 3500))
     original_length = len(text)
     if len(text) > max_length:
         truncation_msg = f"\n\n... (truncated, original length: {original_length} characters)"
@@ -868,10 +861,8 @@ def sanitize_workflow_output(text):
     
     return text
 
-# Alias for backward compatibility with tests
-# Note: This must be defined after send_telegram_message_direct
 def send_telegram_message_env(chat_id, command, raw_output, run_id=None, project=None):
-    """Alias for send_telegram_message_direct for backward compatibility with tests"""
+    """Alias for send_telegram_message_direct"""
     return send_telegram_message_direct(chat_id, command, raw_output, run_id, project)
 
 
