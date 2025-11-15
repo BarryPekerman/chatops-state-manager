@@ -1,26 +1,10 @@
 name: Deploy to Dev
 
 # Execution flow:
-# 1. Push to dev branch (with lambda/** changes) → Lambda CI/CD triggers
-# 2. Lambda CI/CD completes successfully → This workflow triggers via workflow_run OR push
-# 3. This workflow checks CI status, builds artifacts, and deploys to dev
+# 1. Manual trigger only - user must explicitly start deployment
+# 2. This workflow checks CI status, builds artifacts, and deploys to dev
 on:
-  # Trigger after Lambda CI/CD completes successfully (primary trigger)
-  workflow_run:
-    workflows: ["Lambda CI/CD"]
-    types:
-      - completed
-    branches:
-      - dev
-  # Fallback: trigger on push and check CI status (more reliable than workflow_run alone)
-  push:
-    branches:
-      - dev
-    paths:
-      - 'lambda/**'
-      - 'terraform/**'
-      - '.github/workflows/deploy-dev.yml'
-  # Allow manual triggers (will build artifacts if needed)
+  # Manual deployment only - requires explicit user action
   workflow_dispatch:
     inputs:
       skip_ci_check:
@@ -55,7 +39,11 @@ jobs:
       - name: Verify CI passed
         id: ci_check
         run: |
-          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+          if [ "${{ github.event.inputs.skip_ci_check }}" = "true" ]; then
+            echo "⚠️ Skipping CI check (user requested)"
+            echo "ci_status=skipped" >> $GITHUB_OUTPUT
+          # Removed workflow_run trigger - manual dispatch only
+          if false; then
             # Triggered by workflow_run - CI already completed
             if [ "${{ github.event.workflow_run.conclusion }}" = "success" ]; then
               echo "✅ Lambda CI/CD completed successfully (workflow_run trigger)"
@@ -67,8 +55,8 @@ jobs:
               echo "ci_status=failed" >> $GITHUB_OUTPUT
               exit 1
             fi
-          elif [ "${{ github.event_name }}" = "push" ]; then
-            # Triggered by push - check if Lambda CI/CD ran and passed
+          else
+            # Manual dispatch - check if Lambda CI/CD ran and passed
             # Lambda CI/CD only runs when lambda/** files change, so if it didn't run,
             # we can assume no lambda changes and proceed
             echo "🔍 Checking if Lambda CI/CD ran for commit ${{ github.sha }}..."
@@ -144,11 +132,6 @@ jobs:
                 fi
               fi
             done
-          else
-            # Manual dispatch
-            echo "⚠️ Manual trigger - artifacts will be built"
-            echo "⚠️ Make sure Lambda CI/CD has completed for this commit"
-            echo "ci_status=manual" >> $GITHUB_OUTPUT
           fi
       
       - name: Debug output
@@ -164,14 +147,10 @@ jobs:
     name: Prepare Artifacts
     runs-on: ubuntu-latest
     needs: check-ci-status
-    # Only proceed if CI passed, skipped (no lambda changes), or manual dispatch
-    if: |
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
-      (github.event_name == 'push' && (needs.check-ci-status.outputs.ci_status == 'success' || needs.check-ci-status.outputs.ci_status == 'running' || needs.check-ci-status.outputs.ci_status == 'skipped')) ||
-      github.event_name == 'workflow_dispatch'
-    # Use the workflow_run SHA if available (from CI), otherwise use current SHA
+    # Always proceed for manual dispatch
+    # Use current commit SHA
     env:
-      WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      WORKFLOW_SHA: ${{ github.sha }}
     
     steps:
       - name: Checkout code
@@ -244,7 +223,7 @@ jobs:
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
-          name: lambda-artifacts-dev-${{ github.event.workflow_run.head_sha || github.sha }}
+          name: lambda-artifacts-dev-${{ github.sha }}
           path: ./terraform/artifacts/
           if-no-files-found: error
       
