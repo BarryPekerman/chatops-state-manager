@@ -62,14 +62,19 @@
 !/scripts/teardown.sh
 !/scripts/test-telegram-ops.sh
 
-# Terraform files
+# Terraform directory and files
+!/terraform/
 !/terraform/main.tf
 !/terraform/variables.tf
 !/terraform/outputs.tf
 !/terraform/README.md
 !/terraform/terraform.tfvars.example
+!/terraform/.terraform.lock.hcl
+!/terraform/environments/
 !/terraform/environments/README.md
+!/terraform/environments/dev/
 !/terraform/environments/dev/terraform.tfvars.example
+!/terraform/environments/production/
 !/terraform/environments/production/terraform.tfvars.example
 
 # Terraform config
@@ -129,8 +134,9 @@ lambda/**/terraform-zips/
 *.tfstate
 *.tfstate.backup
 *.tfplan
+tfplan
 .terraform/
-.terraform.lock.hcl
+# Note: .terraform.lock.hcl should be committed (explicitly unignored above)
 
 # Ignore Python cache
 __pycache__/
