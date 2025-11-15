@@ -21,8 +21,3 @@ COPY requirements.txt /tests/
 
 # Default command runs pytest
 CMD ["pytest", "-v", "--tb=short", "--color=yes"]
-
-
-
-
-

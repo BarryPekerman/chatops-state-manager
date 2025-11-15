@@ -4,7 +4,7 @@
 repos:
   # General file checks
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.6.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
@@ -37,11 +37,10 @@ repos:
     hooks:
       - id: detect-secrets
         name: detect-secrets
-        entry: detect-secrets scan --force-use-all-plugins
+        entry: detect-secrets scan --all-files
         language: system
         pass_filenames: false
         always_run: true
-        stages: [commit]
 
   # Python formatting (optional - can be enabled if needed)
   # - repo: https://github.com/psf/black
@@ -64,4 +63,3 @@ exclude: |
       \.zip$|
       \.tar\.gz$
   )
-

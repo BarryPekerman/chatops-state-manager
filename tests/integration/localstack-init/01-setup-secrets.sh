@@ -23,8 +23,3 @@ awslocal secretsmanager describe-secret \
   --region us-east-1
 
 echo "✓ LocalStack initialization complete"
-
-
-
-
-

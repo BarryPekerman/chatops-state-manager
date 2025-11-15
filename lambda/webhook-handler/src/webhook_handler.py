@@ -50,7 +50,7 @@ def get_project_registry():
         if not registry_secret_arn:
             logger.warning("PROJECT_REGISTRY_SECRET_ARN not configured")
             return None
-        
+
         # Extract secret name from ARN (format: arn:aws:secretsmanager:region:account:secret:name-xxxxx)
         # Or use the ARN directly if it's already a name
         if ':' in registry_secret_arn:
@@ -66,7 +66,7 @@ def get_project_registry():
         else:
             # Already a secret name, use directly
             secret_id = registry_secret_arn
-        
+
         logger.info(f"Retrieving project registry from secret: {secret_id}")
         response = secrets_client.get_secret_value(SecretId=secret_id)
         registry = json.loads(response['SecretString'])
@@ -136,7 +136,7 @@ def lambda_handler(event, context):
         if isinstance(body, dict) and body.get('callback') is True:
             logger.info("Processing GitHub Actions callback")
             return handle_callback(body)
-        
+
         # Handle Telegram callback queries (inline keyboard button clicks)
         if 'callback_query' in body:
             logger.info("Processing Telegram callback query")
@@ -185,12 +185,12 @@ def lambda_handler(event, context):
             if not registry:
                 send_telegram_message(chat_id, "❌ **Error**\n\nCould not load project registry.")
                 return create_response(200, {'message': 'Failed to load registry'})
-            
+
             projects = registry.get('projects', {})
             if not projects:
                 send_telegram_message(chat_id, "📋 **No Projects**\n\nNo projects registered in the project registry.\n\nUse `/projects` to see available projects.")
                 return create_response(200, {'message': 'No projects available'})
-            
+
             return show_project_selection_menu(chat_id, projects)
         elif command == '/list' or command == '/projects':
             return list_projects(chat_id)
@@ -235,7 +235,7 @@ def validate_telegram_webhook(body, headers):
 def trigger_github_workflow(command, chat_id, project=None, token=None):
     """
     Trigger GitHub Actions workflow via repository_dispatch
-    
+
     Args:
         command: The command to execute (status, destroy, confirm_destroy)
         chat_id: Telegram chat ID
@@ -252,12 +252,12 @@ def trigger_github_workflow(command, chat_id, project=None, token=None):
 
         # Convert project to string if provided
         project_str = str(project) if project else None
-        
+
         payload = {
             'event_type': 'telegram_command',
             'client_payload': {'command': command}
         }
-        
+
         # Add project and token if provided
         if project_str:
             payload['client_payload']['project'] = project_str
@@ -300,7 +300,7 @@ def send_telegram_feedback(chat_id, command, project=None):
 
         # Prepare feedback message based on command
         project_text = f" for project: `{project}`" if project else ""
-        
+
         if command == 'status':
             message = f"🔍 **Status Check Initiated**{project_text}\n\nChecking Terraform state...\n\n⏳ This may take a few moments."
         elif command == 'destroy':
@@ -414,16 +414,16 @@ def send_telegram_message_direct(chat_id, command, raw_output, run_id=None, proj
             return create_response(500, {'error': 'Telegram bot token not configured'})
 
         max_length = int(os.environ.get('MAX_MESSAGE_LENGTH', 3500))
-        
+
         # Truncate output if too long
         if len(raw_output) > max_length:
             raw_output = raw_output[:max_length] + f"\n\n... (truncated, original length: {len(raw_output)} characters)"
 
         # Format message based on command
         project_text = f" (Project: `{project}`)" if project else ""
-        
+
         reply_markup = None
-        
+
         if command == 'status':
             message = f"📊 **Terraform State**{project_text}\n\n```\n{raw_output}\n```"
         elif command == 'destroy':
@@ -450,7 +450,7 @@ def send_telegram_message_direct(chat_id, command, raw_output, run_id=None, proj
             'text': message,
             'parse_mode': 'Markdown'
         }
-        
+
         if reply_markup:
             payload['reply_markup'] = reply_markup
 
@@ -474,9 +474,9 @@ def list_projects(chat_id):
             message = "❌ **Error**\n\nCould not retrieve project registry.\n\nPlease ensure the project registry is configured."
             send_telegram_message(chat_id, message)
             return create_response(200, {'message': 'Error retrieving project registry'})
-        
+
         projects = registry.get('projects', {})
-        
+
         if not projects:
             message = "📋 **Registered Projects**\n\nNo projects registered in the project registry.\n\nTo add a project, use:\n`./scripts/terraform-chatops-helper register ./terraform-config <project-name>`"
         else:
@@ -488,11 +488,11 @@ def list_projects(chat_id):
                 key = project_config.get('backend_key', 'N/A')
                 region = project_config.get('region', 'N/A')
                 workspace = project_config.get('workspace', 'default')
-                
+
                 project_list.append(f"• **{project_name}** ({status})\n  Backend: `{bucket}`\n  Key: `{key}`\n  Region: `{region}`\n  Workspace: `{workspace}`")
-            
+
             message = f"📋 **Registered Projects** ({len(projects)})\n\n" + "\n\n".join(project_list)
-        
+
         send_telegram_message(chat_id, message)
         return create_response(200, {'message': 'Project list sent'})
     except Exception as e:
@@ -510,20 +510,20 @@ def send_telegram_message(chat_id, message, reply_markup=None):
         if not telegram_bot_token:
             logger.warning("No Telegram bot token configured")
             return
-        
+
         telegram_url = f"https://api.telegram.org/bot{telegram_bot_token}/sendMessage"
         payload = {
             'chat_id': chat_id,
             'text': message,
             'parse_mode': 'Markdown'
         }
-        
+
         if reply_markup:
             payload['reply_markup'] = reply_markup
-        
+
         response = requests.post(telegram_url, json=payload, timeout=10)
         response.raise_for_status()
-        
+
         logger.info(f"Sent Telegram message to {chat_id}")
     except Exception as e:
         logger.error(f"Failed to send Telegram message: {e}")
@@ -534,13 +534,13 @@ def show_project_selection_menu(chat_id, projects):
     """
     try:
         project_names = list(projects.keys())
-        
+
         # Create inline keyboard with project buttons (2 per row)
         keyboard = []
-        
+
         # Add header message for Step 1
         message = "🔍 **Select a project:**\n\n"
-        
+
         # Create buttons: projects in rows of 2 (just project names)
         for i in range(0, len(project_names), 2):
             row = []
@@ -550,7 +550,7 @@ def show_project_selection_menu(chat_id, projects):
                     enabled = projects[project_name].get('enabled', True)
                     if not enabled:
                         continue  # Skip disabled projects
-                    
+
                     # Use callback_data format: select_project:{project_name}
                     row.append({
                         'text': project_name,
@@ -558,15 +558,15 @@ def show_project_selection_menu(chat_id, projects):
                     })
             if row:  # Only add row if it has at least one button
                 keyboard.append(row)
-        
+
         # Add utility buttons
         keyboard.append([{'text': '📋 List All Projects', 'callback_data': 'list_projects'}])
         keyboard.append([{'text': '❌ Cancel', 'callback_data': 'cancel'}])
-        
+
         reply_markup = {
             'inline_keyboard': keyboard
         }
-        
+
         send_telegram_message(chat_id, message, reply_markup)
         return create_response(200, {'message': 'Project selection menu shown'})
     except Exception as e:
@@ -580,26 +580,26 @@ def show_command_selection(chat_id, project_name):
     try:
         # Create inline keyboard with command buttons
         keyboard = []
-        
+
         # Add command buttons: Status and Destroy
         keyboard.append([
             {'text': '📊 Status', 'callback_data': f'status:{project_name}'},
             {'text': '💥 Destroy', 'callback_data': f'destroy:{project_name}'}
         ])
-        
+
         # Add navigation and utility buttons
         keyboard.append([
             {'text': '← Back', 'callback_data': 'back'},
             {'text': '❌ Cancel', 'callback_data': 'cancel'}
         ])
-        
+
         reply_markup = {
             'inline_keyboard': keyboard
         }
-        
+
         # Message for Step 2: command selection
         message = f"✅ **Selected project:** `{project_name}`\n\n**What would you like to do?**"
-        
+
         send_telegram_message(chat_id, message, reply_markup)
         return create_response(200, {'message': 'Command selection shown'})
     except Exception as e:
@@ -630,7 +630,7 @@ def show_help(chat_id):
 • `/select` - Start project selection
 • `/list` - View all projects with backend details
 • `/help` - Show this help message"""
-        
+
         send_telegram_message(chat_id, message)
         return create_response(200, {'message': 'Help sent'})
     except Exception as e:
@@ -645,16 +645,16 @@ def handle_callback_query(callback_query):
         chat_id = callback_query.get('message', {}).get('chat', {}).get('id')
         callback_data = callback_query.get('data', '')
         query_id = callback_query.get('id')
-        
+
         logger.info(f"Processing callback query: {callback_data} from chat {chat_id}")
-        
+
         # Check authorization
         authorized_chat_id = os.environ.get('AUTHORIZED_CHAT_ID')
         if str(chat_id) != str(authorized_chat_id):
             logger.warning(f"Unauthorized chat ID in callback: {chat_id}")
             answer_callback_query(query_id, "Unauthorized")
             return create_response(403, {'error': 'Unauthorized'})
-        
+
         # Parse callback data: format is "select_project:project_name", "command:project_name", "list_projects", "cancel", or "back"
         if callback_data == 'list_projects':
             answer_callback_query(query_id, "Loading projects...")
@@ -675,21 +675,21 @@ def handle_callback_query(callback_query):
                 send_telegram_message(chat_id, "📋 **No Projects**\n\nNo projects registered in the project registry.\n\nUse `/projects` to see available projects.")
                 return create_response(200, {'message': 'No projects available'})
             return show_project_selection_menu(chat_id, projects)
-        
+
         # Parse callback data with colon separator
         if ':' in callback_data:
             command, project = callback_data.split(':', 1)
-            
+
             # Handle project selection (Step 1 -> Step 2)
             if command == 'select_project':
                 answer_callback_query(query_id, f"Selected: {project}")
                 return show_command_selection(chat_id, project)
-            
+
             # Handle command execution (Step 2 -> workflow)
             elif command == 'status' or command == 'destroy':
                 # Answer callback to show loading
                 answer_callback_query(query_id, f"Processing {command} for {project}...")
-                
+
                 # Trigger the workflow with the selected project
                 if command == 'status':
                     return trigger_github_workflow('status', chat_id, project=project)
@@ -705,7 +705,7 @@ def handle_callback_query(callback_query):
         else:
             answer_callback_query(query_id, "Invalid callback data", show_alert=True)
             return create_response(400, {'error': 'Invalid callback data'})
-            
+
     except Exception as e:
         logger.error(f"Error handling callback query: {str(e)}")
         if 'query_id' in locals():
@@ -720,17 +720,17 @@ def answer_callback_query(query_id, text, show_alert=False):
         telegram_bot_token = get_telegram_bot_token()
         if not telegram_bot_token:
             return
-        
+
         telegram_url = f"https://api.telegram.org/bot{telegram_bot_token}/answerCallbackQuery"
         payload = {
             'callback_query_id': query_id,
             'text': text,
             'show_alert': show_alert
         }
-        
+
         response = requests.post(telegram_url, json=payload, timeout=10)
         response.raise_for_status()
-        
+
         logger.info(f"Answered callback query: {query_id}")
     except Exception as e:
         logger.error(f"Failed to answer callback query: {e}")
@@ -741,7 +741,7 @@ def sanitize_workflow_output(text):
     """
     if not text:
         return ""
-    
+
     # Truncate first to avoid redacting entire long strings
     max_length = int(os.environ.get('MAX_MESSAGE_LENGTH', 3500))
     original_length = len(text)
@@ -756,27 +756,25 @@ def sanitize_workflow_output(text):
         if len(text) > max_length:
             available_length = max_length - len(truncation_msg)
             text = text[:available_length] + truncation_msg
-    
+
     # Redact GitHub tokens (ghp_ prefix followed by alphanumeric, typically 36+ chars)
     text = re.sub(r'ghp_[a-zA-Z0-9]{20,}', '[REDACTED]', text)
-    
+
     # Redact AWS access keys (AKIA prefix)
     text = re.sub(r'AKIA[0-9A-Z]{16}', '[REDACTED]', text)
-    
+
     # Redact AWS secret keys (base64-like pattern, but not simple repeated characters)
     # Only match if it contains at least some variation (not all same character)
     text = re.sub(r'[A-Za-z0-9/+=]{40,}', lambda m: '[REDACTED]' if len(set(m.group())) > 3 else m.group(), text)
-    
+
     # Redact generic password patterns (password=value or password: value)
     text = re.sub(r'(?i)password\s*[=:]\s*[^\s\n\r]+', '[REDACTED]', text)
-    
+
     # Redact generic secret/token patterns
     text = re.sub(r'(?i)(secret|token)\s*[=:]\s*[^\s\n\r]+', '[REDACTED]', text)
-    
+
     return text
 
 def send_telegram_message_env(chat_id, command, raw_output, run_id=None, project=None):
     """Alias for send_telegram_message_direct"""
     return send_telegram_message_direct(chat_id, command, raw_output, run_id, project)
-
-

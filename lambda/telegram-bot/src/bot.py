@@ -80,7 +80,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
         # Forward to main API Gateway
         api_gateway_url = os.environ.get('API_GATEWAY_URL')
-        
+
         if not api_gateway_url:
             logger.error("Missing API Gateway URL configuration")
             return create_response(500, {'error': 'Missing API Gateway URL configuration'})

@@ -67,7 +67,7 @@ class TerraformOutputProcessor:
 
             # Clean and sanitize output
             cleaned_output = self.sanitize_output(raw_output)
-            
+
             logger.info(f"Raw output length: {len(raw_output)}")
             logger.info(f"Cleaned output length: {len(cleaned_output)}")
 
@@ -112,7 +112,7 @@ class TerraformOutputProcessor:
                         logger.warning("Could not extract plan summary, using simple processing")
                         processed_messages = self.process_simple(cleaned_output, command)
                         processing_method = "regex_only"
-                
+
                 elif command == 'confirm_destroy':
                     # Extract apply result
                     apply_result = self.extract_apply_result(cleaned_output)
@@ -141,12 +141,12 @@ class TerraformOutputProcessor:
                         logger.warning("Could not extract apply result, using simple processing")
                         processed_messages = self.process_simple(cleaned_output, command)
                         processing_method = "regex_only"
-                
+
                 elif command == 'status':
                     # Status is always simple - use regex extraction
                     processed_messages = self.format_status_with_regex(cleaned_output)
                     processing_method = "regex_only"
-                
+
                 else:
                     # Unknown command - fallback to simple processing
                     processed_messages = self.process_simple(cleaned_output, command)
@@ -202,7 +202,7 @@ class TerraformOutputProcessor:
             # Clean up formatting
             scrubbed = re.sub(r"\n{3,}", "\n\n", scrubbed)  # Collapse multiple newlines
             scrubbed = scrubbed.strip()
-            
+
             # Remove duplicate sections (common in Terraform output)
             scrubbed = self.remove_duplicate_sections(scrubbed)
 
@@ -211,16 +211,16 @@ class TerraformOutputProcessor:
         except Exception as e:
             logger.warning(f"Error sanitizing output: {e}")
             return text[:self.config.max_message_length]
-    
+
     def remove_duplicate_sections(self, text: str) -> str:
         """Remove duplicate resource lists and action summaries"""
         lines = text.split('\n')
         seen_sections = set()
         result_lines = []
-        
+
         current_section = []
         in_list = False
-        
+
         for line in lines:
             # Detect section headers
             if any(phrase in line.lower() for phrase in [
@@ -262,11 +262,11 @@ class TerraformOutputProcessor:
                     in_list = False
             else:
                 result_lines.append(line)
-        
+
         # Add remaining section
         if current_section:
             result_lines.extend(current_section)
-        
+
         return '\n'.join(result_lines)
 
     def _invoke_bedrock(self, prompt: str) -> str:
@@ -281,27 +281,27 @@ class TerraformOutputProcessor:
                     "topP": 0.9
                 }
             }
-            
+
             logger.info(f"Invoking Bedrock model: {model_id}, prompt length: {len(prompt)}")
-            
+
             response = bedrock_client.invoke_model(
                 modelId=model_id,
                 body=json.dumps(request_body)
             )
-            
+
             logger.info(f"Bedrock response status: {response.get('ResponseMetadata', {}).get('HTTPStatusCode')}")
-            
+
             # Parse response
             response_body = json.loads(response['body'].read())
-            
+
             if 'results' not in response_body or len(response_body['results']) == 0:
                 logger.warning("Bedrock returned empty results")
                 return ""
-            
+
             summary = response_body['results'][0]['outputText'].strip()
             logger.info(f"AI summary generated, length: {len(summary)}")
             return summary
-            
+
         except Exception as e:
             logger.error(f"Bedrock invocation failed: {str(e)}")
             logger.error(f"Exception type: {type(e).__name__}")
@@ -311,14 +311,14 @@ class TerraformOutputProcessor:
     def summarize_error_with_ai(self, error_text: str) -> str:
         """
         Task 1: Use LLM to summarize unstructured errors
-        
+
         This is the CORRECT use of LLM: high-level comprehension of unstructured error text.
         The LLM's job is to make the error human-readable and actionable.
         The bot code has already extracted the error text - no counting or extraction needed.
         """
         # Truncate error text to avoid token limits
         truncated_error = error_text[:3000]
-        
+
         prompt = f"""You are a DevOps assistant. The following is a raw Terraform error message. Summarize this error into a clear, human-readable, and actionable insight for the user. Explain what failed and why.
 
 Error Message:
@@ -328,20 +328,20 @@ Provide a concise summary (2-3 sentences) explaining:
 1. What failed
 2. Why it failed
 3. What the user should do next"""
-        
+
         return self._invoke_bedrock(prompt)
 
     def analyze_risk_with_ai(self, plan_text: str, plan_summary: Dict[str, int]) -> str:
         """
         Task 2: Use LLM to analyze plan for risk
-        
+
         IMPORTANT: The plan_summary counts are PRE-EXTRACTED by bot code (regex).
         The LLM must NOT attempt to count or recalculate these numbers.
         The LLM's ONLY job is high-level comprehension and risk analysis.
         """
         # Truncate plan text to avoid token limits
         truncated_plan = plan_text[:4000]
-        
+
         prompt = f"""You are a senior DevOps engineer. Analyze the following Terraform plan for risk.
 
 CRITICAL: The plan summary below was already extracted by automated code. Do NOT attempt to count or recalculate these numbers. Your ONLY task is to analyze the risk level and identify critical resources.
@@ -357,27 +357,27 @@ Your task is to provide a concise risk analysis (2-3 sentences) focusing on:
 3. Overall risk level (high/medium/low)
 
 If the plan is low-risk, simply state that. Do NOT count resources - use the pre-extracted summary above."""
-        
+
         return self._invoke_bedrock(prompt)
 
     def format_plan_with_regex(self, plan_summary: Dict[str, int], text: str) -> List[str]:
         """Format destroy plan using regex extraction only (no LLM)"""
         header = "💥 **Destroy Plan Summary**"
         summary_line = f"Plan: {plan_summary['to_add']} to add, {plan_summary['to_change']} to change, {plan_summary['to_destroy']} to destroy"
-        
+
         # Extract resource types using existing count_resources method
         resource_counts = self.count_resources(text)
-        
+
         lines = [header, "", summary_line, ""]
-        
+
         if resource_counts:
             lines.append("Resource breakdown:")
             for res_type, count in sorted(resource_counts.items()):
                 lines.append(f"- {res_type}: {count}")
             lines.append("")
-        
+
         lines.append("⚠️ This is only a plan - no resources have been destroyed yet.")
-        
+
         full_message = '\n'.join(lines)
         return self.split_message(full_message)
 
@@ -385,35 +385,35 @@ If the plan is low-risk, simply state that. Do NOT count resources - use the pre
         """Format destroy plan with LLM risk analysis"""
         header = "💥 **Destroy Plan Summary**"
         summary_line = f"Plan: {plan_summary['to_add']} to add, {plan_summary['to_change']} to change, {plan_summary['to_destroy']} to destroy"
-        
+
         # Extract resource types
         resource_counts = self.count_resources(text)
-        
+
         lines = [header, "", summary_line, ""]
-        
+
         if resource_counts:
             lines.append("Resource breakdown:")
             for res_type, count in sorted(resource_counts.items()):
                 lines.append(f"- {res_type}: {count}")
             lines.append("")
-        
+
         # Add risk analysis from LLM
         if risk_analysis:
             lines.append("⚠️ **Risk Analysis:**")
             lines.append(risk_analysis)
             lines.append("")
-        
+
         lines.append("⚠️ This is only a plan - no resources have been destroyed yet.")
-        
+
         full_message = '\n'.join(lines)
         return self.split_message(full_message)
 
     def format_apply_result(self, apply_result: Dict[str, Any], text: str) -> List[str]:
         """Format apply/destroy results using regex extraction (no LLM)"""
         header = "🚀 **Destroy Apply Results**"
-        
+
         lines = [header, ""]
-        
+
         if apply_result['status'] == 'success':
             count = apply_result.get('resources_destroyed')
             if count is not None:
@@ -423,19 +423,19 @@ If the plan is low-risk, simply state that. Do NOT count resources - use the pre
                 lines.append(f"✅ Destroy Successful")
         else:
             lines.append("❌ Destroy Failed")
-        
+
         full_message = '\n'.join(lines)
         return self.split_message(full_message)
 
     def format_status_with_regex(self, text: str) -> List[str]:
         """Format status command using regex extraction (no LLM)"""
         header = "🔍 **Terraform Status Summary**"
-        
+
         resource_counts = self.count_resources(text)
         total = sum(resource_counts.values()) if resource_counts else 0
-        
+
         lines = [header, ""]
-        
+
         if total > 0:
             lines.append(f"Total resources: {total}")
             if resource_counts:
@@ -444,7 +444,7 @@ If the plan is low-risk, simply state that. Do NOT count resources - use the pre
                     lines.append(f"- {res_type}: {count}")
         else:
             lines.append("The state file is empty. No resources are represented.")
-        
+
         full_message = '\n'.join(lines)
         return self.split_message(full_message)
 
@@ -455,11 +455,11 @@ If the plan is low-risk, simply state that. Do NOT count resources - use the pre
             'destroy': "💥 **Destroy Plan Error**",
             'confirm_destroy': "🚀 **Destroy Apply Error**"
         }
-        
+
         header = headers.get(command, "❌ **Terraform Error**")
-        
+
         lines = [header, "", error_summary]
-        
+
         full_message = '\n'.join(lines)
         return self.split_message(full_message)
 
@@ -472,7 +472,7 @@ If the plan is low-risk, simply state that. Do NOT count resources - use the pre
         }
 
         header = headers.get(command, "✅ **Terraform Result**")
-        
+
         # Parse and structure the output
         structured = self.parse_terraform_output(text, command)
 
@@ -483,15 +483,15 @@ If the plan is low-risk, simply state that. Do NOT count resources - use the pre
         # Format with code block
         formatted_text = f"{header}\n\n{structured}"
         return self.split_message(formatted_text)
-    
+
     def parse_terraform_output(self, text: str, command: str) -> str:
         """Parse Terraform output to extract structured information"""
         if not text:
             return text
-        
+
         # Remove duplicates first
         deduped = self.remove_duplicate_sections(text)
-        
+
         # Check for apply completion status (for confirm_destroy)
         completion_status = None
         if command == 'confirm_destroy':
@@ -507,18 +507,18 @@ If the plan is low-risk, simply state that. Do NOT count resources - use the pre
             elif re.search(r'Terraform will perform|will be destroyed', deduped, re.IGNORECASE):
                 # This is still plan output, not apply results
                 completion_status = "⚠️ **Note:** This appears to be plan output, not actual apply results"
-        
+
         # Extract resource counts and types
         resource_counts = self.count_resources(deduped)
-        
+
         # Build structured output
         lines = []
-        
+
         # Add completion status for confirm_destroy
         if completion_status:
             lines.append(completion_status)
             lines.append("")
-        
+
         # Add summary if we have resource counts
         if resource_counts:
             total = sum(resource_counts.values())
@@ -532,7 +532,7 @@ If the plan is low-risk, simply state that. Do NOT count resources - use the pre
             lines.append("")
             lines.append("---")
             lines.append("")
-        
+
         # For confirm_destroy, prefer showing actual results over plan
         if command == 'confirm_destroy':
             # Look for the apply results section (comes after plan)
@@ -542,12 +542,12 @@ If the plan is low-risk, simply state that. Do NOT count resources - use the pre
                 lines.append("")
                 lines.append(apply_section)
                 return '\n'.join(lines)
-        
+
         # Add the actual resource list (first occurrence only)
         resource_lines = []
         in_resource_section = False
         seen_resources = set()
-        
+
         for line in deduped.split('\n'):
             # Detect resource lines
             if re.search(r'(aws_|resource|module\.|data\.)', line, re.IGNORECASE):
@@ -561,31 +561,31 @@ If the plan is low-risk, simply state that. Do NOT count resources - use the pre
                 break
             elif in_resource_section:
                 resource_lines.append(line)
-        
+
         if resource_lines:
             lines.extend(resource_lines)
         else:
             # Fallback to deduped text
             lines.append(deduped)
-        
+
         return '\n'.join(lines)
-    
+
     def extract_apply_results(self, text: str) -> str:
         """Extract the actual apply results section from Terraform output"""
         lines = text.split('\n')
         results_start = None
         results_end = None
-        
+
         # Find where apply results start
         for i, line in enumerate(lines):
             if re.search(r'Apply complete!|Destroy complete!|resources destroyed', line, re.IGNORECASE):
                 results_start = i
                 break
-        
+
         if results_start is None:
             # No clear apply results found, return empty
             return None
-        
+
         # Extract from results_start to end (or next major section)
         result_lines = []
         for i in range(results_start, len(lines)):
@@ -594,13 +594,13 @@ If the plan is low-risk, simply state that. Do NOT count resources - use the pre
             if i > results_start + 50 and re.match(r'^[A-Z]', line.strip()):
                 break
             result_lines.append(line)
-        
+
         return '\n'.join(result_lines[:30])  # Limit to 30 lines
-    
+
     def count_resources(self, text: str) -> dict:
         """Count resources by type in Terraform output"""
         counts = {}
-        
+
         # Specific resource patterns (order matters - more specific first)
         specific_patterns = {
             'AWS Instance': r'aws_instance\.[\w-]+',
@@ -613,10 +613,10 @@ If the plan is low-risk, simply state that. Do NOT count resources - use the pre
             'VPC Connection': r'aws_vpc.*connection',
             'Route': r'aws_route\.[\w-]+',
         }
-        
+
         # Track all matched resource strings to avoid double-counting
         matched_resources = set()
-        
+
         # Count specific resource types first
         for res_type, pattern in specific_patterns.items():
             matches = re.findall(pattern, text, re.IGNORECASE)
@@ -626,7 +626,7 @@ If the plan is low-risk, simply state that. Do NOT count resources - use the pre
                 counts[res_type] = len(unique_matches)
                 # Track these resources so we don't count them in "Other"
                 matched_resources.update(unique_matches)
-        
+
         # Now count "Other AWS Resources" - only resources NOT already counted
         # Find all AWS resources
         all_aws_resources = re.findall(r'(aws_\w+\.[\w-]+)', text, re.IGNORECASE)
@@ -637,7 +637,7 @@ If the plan is low-risk, simply state that. Do NOT count resources - use the pre
             other_resources = unique_aws_resources - matched_resources
             if other_resources:
                 counts['Other AWS Resources'] = len(other_resources)
-        
+
         # Fallback: If no AWS resources found, try generic pattern
         if not counts:
             generic_matches = re.findall(r'(\w+\.\w+)', text)
@@ -645,7 +645,7 @@ If the plan is low-risk, simply state that. Do NOT count resources - use the pre
                 for match in set(generic_matches):
                     res_type = match.split('.')[0].replace('aws_', 'AWS ').title()
                     counts[res_type] = generic_matches.count(match)
-        
+
         return counts
 
     def extract_plan_summary(self, text: str) -> Optional[Dict[str, int]]:
@@ -668,20 +668,20 @@ If the plan is low-risk, simply state that. Do NOT count resources - use the pre
             match1 = re.search(r'Resources:\s*(\d+)\s+destroyed', text, re.IGNORECASE)
             match2 = re.search(r'(\d+)\s+resource\(s\)\s+destroyed', text, re.IGNORECASE)
             match3 = re.search(r'Destroy\s+Complete!\s+Resources:\s*(\d+)\s+destroyed', text, re.IGNORECASE)
-            
+
             if match1:
                 count = int(match1.group(1))
             elif match2:
                 count = int(match2.group(1))
             elif match3:
                 count = int(match3.group(1))
-            
+
             return {'status': 'success', 'resources_destroyed': count}
-        
+
         # Check for errors
         if re.search(r'Error:|Failed|failed', text, re.IGNORECASE):
             return {'status': 'failed'}
-        
+
         return None
 
     def extract_errors(self, text: str) -> Optional[str]:
@@ -703,7 +703,7 @@ If the plan is low-risk, simply state that. Do NOT count resources - use the pre
         # Only check if there are changes or destroys
         if plan_summary['to_change'] == 0 and plan_summary['to_destroy'] == 0:
             return False
-        
+
         high_risk_patterns = [
             r'aws_db_instance',
             r'aws_rds_cluster',
@@ -715,7 +715,7 @@ If the plan is low-risk, simply state that. Do NOT count resources - use the pre
             r'aws_s3_bucket',
             r'aws_route53',
         ]
-        
+
         for pattern in high_risk_patterns:
             if re.search(pattern, text, re.IGNORECASE):
                 return True
@@ -726,7 +726,7 @@ If the plan is low-risk, simply state that. Do NOT count resources - use the pre
         if not message or not message.strip():
             logger.warning(f"split_message: received empty or whitespace-only message")
             return []
-            
+
         if len(message) <= self.config.max_message_length:
             return [message]
 
@@ -789,19 +789,19 @@ If the plan is low-risk, simply state that. Do NOT count resources - use the pre
         """Send a single message to Telegram"""
         try:
             telegram_url = f"https://api.telegram.org/bot{self.telegram_bot_token}/sendMessage"
-            
+
             # Try with Markdown first
             payload = {
                 'chat_id': chat_id,
                 'text': text,
                 'parse_mode': 'Markdown'
             }
-            
+
             if reply_markup:
                 payload['reply_markup'] = reply_markup
 
             response = requests.post(telegram_url, json=payload, timeout=10)
-            
+
             # If Markdown fails, try with plain text
             if response.status_code == 400:
                 logger.warning("Markdown parsing failed, retrying with plain text")
@@ -813,25 +813,25 @@ If the plan is low-risk, simply state that. Do NOT count resources - use the pre
                 if reply_markup:
                     payload['reply_markup'] = reply_markup
                 response = requests.post(telegram_url, json=payload, timeout=10)
-            
+
             response.raise_for_status()
             return response.json()
 
         except Exception as e:
             logger.error(f"Failed to send Telegram message: {e}")
             raise
-    
+
     def send_telegram_message_with_button(self, chat_id: str, text: str, command: str, project: str) -> Dict[str, Any]:
         """Send a message with inline keyboard button"""
         reply_markup = None
-        
+
         if command == 'destroy' and project:
             keyboard = [[
                 {'text': '✅ Confirm Destroy', 'callback_data': f'confirm_destroy:{project}'},
                 {'text': '❌ Cancel', 'callback_data': 'cancel'}
             ]]
             reply_markup = {'inline_keyboard': keyboard}
-        
+
         return self.send_telegram_message(chat_id, text, reply_markup)
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:

@@ -30,23 +30,23 @@ def repository_dispatch(owner, repo):
     try:
         # Log the request
         logger.info(f"Received dispatch for {owner}/{repo}")
-        
+
         # Validate authorization header
         auth_header = request.headers.get('Authorization', '')
         if not auth_header.startswith('token '):
             return jsonify({'error': 'Unauthorized'}), 401
-        
+
         # Parse payload
         payload = request.get_json()
         if not payload:
             return jsonify({'error': 'Invalid payload'}), 400
-        
+
         event_type = payload.get('event_type')
         client_payload = payload.get('client_payload', {})
-        
+
         logger.info(f"Event type: {event_type}")
         logger.info(f"Client payload: {client_payload}")
-        
+
         # Store for verification
         received_dispatches.append({
             'timestamp': time.time(),
@@ -56,10 +56,10 @@ def repository_dispatch(owner, repo):
             'client_payload': client_payload,
             'headers': dict(request.headers)
         })
-        
+
         # Simulate GitHub's 204 No Content response
         return '', 204
-    
+
     except Exception as e:
         logger.error(f"Error processing dispatch: {e}")
         return jsonify({'error': str(e)}), 500
@@ -96,10 +96,10 @@ def simulate_callback():
         chat_id = payload.get('chat_id')
         command = payload.get('command', 'status')
         raw_output = payload.get('raw_output', 'Mock Terraform output')
-        
+
         if not callback_url or not chat_id:
             return jsonify({'error': 'Missing required fields'}), 400
-        
+
         # Simulate sending callback
         import requests
         callback_payload = {
@@ -109,15 +109,15 @@ def simulate_callback():
             'run_id': f'test-run-{int(time.time())}',
             'raw_output': raw_output
         }
-        
+
         response = requests.post(callback_url, json=callback_payload, timeout=10)
-        
+
         return jsonify({
             'message': 'Callback sent',
             'status_code': response.status_code,
             'response': response.text
         }), 200
-    
+
     except Exception as e:
         logger.error(f"Error simulating callback: {e}")
         return jsonify({'error': str(e)}), 500
@@ -125,8 +125,3 @@ def simulate_callback():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
-
-
-
-
-
