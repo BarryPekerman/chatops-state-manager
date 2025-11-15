@@ -1,0 +1,180 @@
+# Whitelist .gitignore - Ignore everything, then unignore specific files
+# This ensures only required files are tracked
+# NO WILDCARDS - only explicit file paths
+
+# Ignore everything by default
+/*
+
+# Unignore specific tracked files (explicit paths only, no wildcards)
+
+# Root level files
+!/.gitignore
+!/.pre-commit-config.yaml
+!/.gitleaks.toml
+!/LICENSE
+!/README.md
+!/MANIFEST.txt
+!/docker-compose.test.yml
+!/install.conf.example
+!/build_all_lambdas.py
+
+# GitHub workflows
+!/.github/workflows/deploy-dev.yml
+!/.github/workflows/deploy-production.yml
+!/.github/workflows/lambda-ci.yml
+!/.github/workflows/pre-commit.yml
+!/.github/workflows/telegram-ops.yml
+
+# Documentation
+!/docs/ASSUME_ROLE_POLICY.md
+!/docs/CI_CD.md
+!/docs/DEPLOYMENT_IN_TESTS.md
+!/docs/DEPLOYMENT.md
+!/docs/LAMBDA_DEPLOYMENT.md
+!/docs/MODULE_VERSIONING.md
+!/docs/PROJECT_MANAGEMENT.md
+!/docs/TERRAFORM_CLOUD_MODULE.md
+!/docs/TESTING.md
+!/docs/WORKFLOW_STRATEGY.md
+
+# Configuration examples
+!/config/install.conf.example
+
+# Ansible files
+!/ansible/bootstrap.yml
+!/ansible/playbook.yml
+!/ansible/scripts/encrypt_github_secret.py
+!/ansible/vars/bootstrap-secrets.example.yml
+!/ansible/vars/secrets.example.yml
+
+# Scripts
+!/scripts/add-project.sh
+!/scripts/bootstrap.sh
+!/scripts/debug-chatops.sh
+!/scripts/install.sh
+!/scripts/rebuild_and_deploy.sh
+!/scripts/register-project-from-dir.sh
+!/scripts/run-github-workflow.sh
+!/scripts/run-tests.sh
+!/scripts/setup-chatops.sh
+!/scripts/setup-requirements.sh
+!/scripts/setup-terraform.sh
+!/scripts/teardown.sh
+!/scripts/test-telegram-ops.sh
+
+# Terraform directory and files
+!/terraform/
+# Terraform files
+!/terraform/main.tf
+!/terraform/variables.tf
+!/terraform/outputs.tf
+!/terraform/README.md
+!/terraform/terraform.tfvars.example
+!/terraform/.terraform.lock.hcl
+!/terraform/environments/
+!/terraform/environments/README.md
+!/terraform/environments/dev/
+!/terraform/environments/dev/terraform.tfvars.example
+!/terraform/environments/production/
+!/terraform/environments/README.md
+!/terraform/environments/dev/terraform.tfvars.example
+!/terraform/environments/production/terraform.tfvars.example
+
+# Terraform config
+!/terraform-config/main.tf
+
+# Lambda files - ai-output-processor
+!/lambda/ai-output-processor/build.sh
+!/lambda/ai-output-processor/Dockerfile
+!/lambda/ai-output-processor/src/processor.py
+!/lambda/ai-output-processor/src/requirements.txt
+!/lambda/ai-output-processor/tests/test_processor.py
+
+# Lambda files - telegram-bot
+!/lambda/telegram-bot/build.sh
+!/lambda/telegram-bot/Dockerfile
+!/lambda/telegram-bot/README.md
+!/lambda/telegram-bot/setup_webhook.sh
+!/lambda/telegram-bot/src/bot.py
+!/lambda/telegram-bot/src/requirements.txt
+!/lambda/telegram-bot/tests/test_bot.py
+
+# Lambda files - webhook-handler
+!/lambda/webhook-handler/build.sh
+!/lambda/webhook-handler/Dockerfile
+!/lambda/webhook-handler/README.md
+!/lambda/webhook-handler/rebuild_zip.py
+!/lambda/webhook-handler/src/requirements.txt
+!/lambda/webhook-handler/src/webhook_handler.py
+!/lambda/webhook-handler/tests/test_webhook_handler.py
+
+# Test files
+!/tests/integration/Dockerfile
+!/tests/integration/localstack-init/01-setup-secrets.sh
+!/tests/integration/mock-github/app.py
+!/tests/integration/mock-github/Dockerfile
+!/tests/integration/requirements.txt
+!/tests/integration/test_message_flow.py
+
+# IMPORTANT: Ignore sensitive/secret files (must be at end to override un-ignore rules)
+install.conf
+terraform/terraform.tfvars
+terraform/environments/*/terraform.tfvars
+ansible/vars/bootstrap-secrets.yml
+ansible/vars/secrets.yml
+
+# Ignore build artifacts
+*.zip
+*.zip.backup
+*.zip.backup*
+*.zip.old
+*.zip.fixed
+terraform-zips/
+lambda/**/*.zip
+lambda/**/terraform-zips/
+
+# Ignore Terraform state and plan files
+*.tfstate
+*.tfstate.backup
+*.tfplan
+tfplan
+.terraform/
+# Note: .terraform.lock.hcl should be committed (explicitly unignored above)
+
+# Ignore Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Ignore test artifacts
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.hypothesis/
+*.cover
+
+# Ignore IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Ignore temporary files
+*.tmp
+*.log
+*.bak
+*.orig
+
+# Ignore environment files
+.env
+.env.local
+.venv/
+venv/
+env/

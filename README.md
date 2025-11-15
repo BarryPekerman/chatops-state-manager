@@ -154,12 +154,12 @@ target-module/
 | api_gateway_stage        | API Gateway stage name                     | `string` | `"prod"` |
 | log_retention_days       | CloudWatch log retention in days           | `number` | `7`      |
 | enable_xray_tracing      | Enable X-Ray tracing for API Gateway       | `bool`   | `true`   |
-| rate_limit               | API Gateway rate limit (requests/second)   | `number` | `100`    |
-| burst_limit              | API Gateway burst limit                    | `number` | `200`    |
-| quota_limit              | API Gateway quota limit                    | `number` | `10000`  |
-| quota_period             | API Gateway quota period                   | `string` | `"DAY"`  |
+| rate_limit                | API Gateway rate limit (requests/second)   | `number` | `100`    |
+| burst_limit               | API Gateway burst limit                    | `number` | `200`    |
+| quota_limit               | API Gateway quota limit                    | `number` | `10000`  |
+| quota_period              | API Gateway quota period                   | `string` | `"DAY"`  |
 | webhook_api_key_required | Whether webhook API requires API key       | `bool`   | `false`  |
-| tags                     | Tags to apply to all resources             | `map(string)` | `{"ManagedBy": "terraform", "Project": "chatops"}` |
+| tags                      | Tags to apply to all resources             | `map(string)` | `{"ManagedBy": "terraform", "Project": "chatops"}` |
 
 ## Outputs
 

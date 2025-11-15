@@ -1,0 +1,74 @@
+---
+- name: Configure GitHub repository secrets via REST API
+  hosts: localhost
+  gather_facts: false
+  vars:
+    github_owner: "{{ github_owner | default('YOUR_ORG_OR_USER') }}"
+    github_repo: "{{ github_repo | default('chatops_terraform_manager') }}"
+    # Secrets to set: name => value
+    # Can be overridden via vars file or extra-vars
+    github_secrets: "{{ github_secrets | default({
+      'AWS_REGION': 'eu-north-1',
+      'AWS_ROLE_TO_ASSUME': 'arn:aws:iam::051826714297:role/ChatOpsTerraformManagerRole',
+      'TELEGRAM_BOT_TOKEN': '',
+      'TELEGRAM_CHAT_ID': '',
+      'CALLBACK_URL': '',
+      'CALLBACK_KEY': ''
+    }) }}"
+
+  pre_tasks:
+    - name: Ensure PyNaCl is available for encryption
+      pip:
+        name: pynacl
+        state: present
+      vars:
+        ansible_python_interpreter: "/usr/bin/python3"
+
+  tasks:
+    - name: Fetch GitHub repo public key
+      uri:
+        url: "https://api.github.com/repos/{{ github_owner }}/{{ github_repo }}/actions/secrets/public-key"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ lookup('env','GITHUB_TOKEN') }}"
+          Accept: "application/vnd.github+json"
+        return_content: true
+      register: public_key_response
+
+    - name: Parse public key and id
+      set_fact:
+        gh_public_key_id: "{{ (public_key_response.json.key_id) | string }}"
+        gh_public_key: "{{ public_key_response.json.key }}"
+
+    - name: Encrypt secret values with repository public key
+      vars:
+        secret_name: "{{ item.key }}"
+        secret_value: "{{ item.value }}"
+      command: >-
+        {{ ansible_playbook_dir }}/scripts/encrypt_github_secret.py
+        --public-key {{ gh_public_key | quote }}
+        --value {{ secret_value | quote }}
+      loop: "{{ github_secrets | dict2items }}"
+      register: encrypted_values
+      changed_when: false
+
+    - name: Build encrypted map
+      set_fact:
+        encrypted_map: "{{ dict(encrypted_values.results | map('extract', attribute='item.key') | list | zip(encrypted_values.results | map(attribute='stdout') | list)) }}"
+
+    - name: PUT each secret to GitHub
+      vars:
+        secret_name: "{{ item.key }}"
+        encrypted_value: "{{ encrypted_map[secret_name] }}"
+      uri:
+        url: "https://api.github.com/repos/{{ github_owner }}/{{ github_repo }}/actions/secrets/{{ secret_name }}"
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ lookup('env','GITHUB_TOKEN') }}"
+          Accept: "application/vnd.github+json"
+        body_format: json
+        body:
+          encrypted_value: "{{ encrypted_value }}"
+          key_id: "{{ gh_public_key_id }}"
+        status_code: [201, 204]
+      loop: "{{ github_secrets | dict2items }}"

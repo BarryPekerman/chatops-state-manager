@@ -1,0 +1,50 @@
+# Dev Environment Configuration (Shared Testing)
+# Copy this file to terraform.tfvars and fill in your values
+#
+# This is a shared testing environment for validating changes before production.
+# Run Terraform from: terraform/environments/dev/
+
+# Environment identifier
+environment = "dev"
+
+# AWS Configuration
+aws_region = "us-east-1"  # Or your preferred region for testing
+
+# GitHub Configuration
+github_owner = "your-github-username"
+github_repo  = "chatops-state-manager"
+github_branch = "main"
+github_token = "" # Set via environment variable or CI/CD secret
+
+# Telegram Configuration
+telegram_bot_token = "" # Set via environment variable or CI/CD secret
+authorized_chat_id = "" # Your Telegram chat ID
+
+# S3 Backend Configuration (for Terraform state)
+# Use a separate state key for dev environment
+s3_bucket_arn = "arn:aws:s3:::your-terraform-state-bucket"
+
+# Lambda Configuration
+name_prefix = "chatops-dev"
+# Paths are relative to terraform/environments/dev/ directory
+webhook_lambda_zip_path      = "../../terraform-zips/webhook-handler.zip"
+telegram_lambda_zip_path     = "../../terraform-zips/telegram-bot.zip"
+ai_processor_lambda_zip_path = "../../terraform-zips/ai-output-processor.zip"
+
+# AI Processing Configuration
+enable_ai_processing = false  # Disable AI in dev to save costs
+max_message_length   = 3500
+ai_threshold        = 1000
+ai_max_tokens       = 1000
+ai_model_id         = "anthropic.claude-3-haiku-20240307-v1:0"
+
+# Logging
+log_retention_days = 7  # Shorter retention for dev
+
+# Tags
+tags = {
+  Environment = "dev"
+  Project     = "chatops-state-manager"
+  ManagedBy   = "terraform"
+  Purpose     = "testing"
+}
