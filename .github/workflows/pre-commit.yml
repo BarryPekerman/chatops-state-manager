@@ -32,8 +32,15 @@ jobs:
 
       - name: Install pre-commit and detect-secrets
         run: pip install pre-commit detect-secrets
-      - name: Run pre-commit hooks
-        run: pre-commit run --all-files
+      - name: Run pre-commit hooks (check only, no modifications)
+        run: |
+          # Run pre-commit in check mode - it will fail if files need fixing
+          # This prevents the workflow from modifying files in CI
+          pre-commit run --all-files --show-diff-on-failure || {
+            echo "::error::Pre-commit hooks found issues that need to be fixed locally."
+            echo "::error::Run 'pre-commit run --all-files' locally to auto-fix these issues."
+            exit 1
+          }
       - name: Run TFLint on terraform/
         if: hashFiles('terraform/**/*.tf') != ''
         run: |
