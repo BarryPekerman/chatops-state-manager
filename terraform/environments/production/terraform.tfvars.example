@@ -1,0 +1,50 @@
+# Production Environment Configuration
+# Copy this file to terraform.tfvars and fill in your values
+#
+# This is the production environment for actual usage.
+# Run Terraform from: terraform/environments/production/
+
+# Environment identifier
+environment = "production"
+
+# AWS Configuration
+aws_region = "eu-north-1"  # Or your preferred region
+
+# GitHub Configuration
+github_owner = "your-github-username"
+github_repo  = "chatops-state-manager"
+github_branch = "main"
+github_token = "" # Set via environment variable or CI/CD secret
+
+# Telegram Configuration
+telegram_bot_token = "" # Set via environment variable or CI/CD secret
+authorized_chat_id = "" # Your Telegram chat ID
+
+# S3 Backend Configuration (for Terraform state)
+# Use a separate state key for production environment
+s3_bucket_arn = "arn:aws:s3:::your-terraform-state-bucket"
+
+# Lambda Configuration
+name_prefix = "chatops"
+# Paths are relative to terraform/environments/production/ directory
+webhook_lambda_zip_path      = "../../terraform-zips/webhook-handler.zip"
+telegram_lambda_zip_path     = "../../terraform-zips/telegram-bot.zip"
+ai_processor_lambda_zip_path = "../../terraform-zips/ai-output-processor.zip"
+
+# AI Processing Configuration
+enable_ai_processing = true   # Enable AI in production
+max_message_length   = 3500
+ai_threshold        = 1000
+ai_max_tokens       = 1000
+ai_model_id         = "anthropic.claude-3-haiku-20240307-v1:0"
+
+# Logging
+log_retention_days = 365  # Longer retention for production
+
+# Tags
+tags = {
+  Environment = "production"
+  Project     = "chatops-state-manager"
+  ManagedBy   = "terraform"
+  CostCenter  = "infrastructure"
+}
