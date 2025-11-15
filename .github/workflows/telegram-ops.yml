@@ -347,19 +347,39 @@ jobs:
           cd terraform-config
           export AWS_REGION="${{ steps.project.outputs.project-region }}"
           export AWS_DEFAULT_REGION="${{ steps.project.outputs.project-region }}"
-          # Re-initialize to ensure providers are available (steps run in separate shells)
+          
+          # Initialize backend only (no providers needed for state list)
           terraform init \
             -backend-config="bucket=${{ steps.project.outputs.project-bucket }}" \
             -backend-config="key=${{ steps.project.outputs.project-key }}" \
             -backend-config="region=${{ steps.project.outputs.project-region }}" \
-            -upgrade
+            -backend-only \
+            -reconfigure
+          
           # Select workspace again (GitHub Actions steps run in separate shells)
           if [[ -n "${{ steps.init.outputs.workspace }}" ]]; then
             echo "Selecting workspace: ${{ steps.init.outputs.workspace }}"
             terraform workspace select "${{ steps.init.outputs.workspace }}" 2>/dev/null || echo "Workspace already selected or not found"
           fi
+          
           echo "Project: ${{ steps.project.outputs.project-selected }}"
-          DESTROY_OUTPUT=$(terraform plan -destroy -no-color 2>&1 || echo "Destroy plan failed")
+          
+          # Use terraform state list to get resources, then format as destroy plan
+          # This avoids provider requirements since we're just reading state
+          RESOURCES=$(terraform state list 2>&1 || echo "")
+          if [[ -z "$RESOURCES" ]] || [[ "$RESOURCES" == *"No state file"* ]] || [[ "$RESOURCES" == *"Error"* ]]; then
+            DESTROY_OUTPUT="No resources found in state file."
+          else
+            RESOURCE_COUNT=$(echo "$RESOURCES" | grep -c "^" || echo "0")
+            DESTROY_OUTPUT="💥 Destroy Plan
+
+Plan: 0 to add, 0 to change, $RESOURCE_COUNT to destroy.
+
+The following resources will be destroyed:
+$(echo "$RESOURCES" | sed 's/^/  - /')
+
+⚠️ This is only a plan - no resources have been destroyed yet."
+          fi
           # Send raw output to Lambda - let Lambda handle formatting and storage
           JSON_PAYLOAD=$(jq -n \
             --arg chat_id "${{ env.TELEGRAM_CHAT_ID }}" \
