@@ -39,6 +39,8 @@ jobs:
   check-ci-status:
     name: Check CI Status
     runs-on: ubuntu-latest
+    outputs:
+      ci_status: ${{ steps.ci_check.outputs.ci_status }}
     # Always run this job to check CI status
     steps:
       - name: Checkout code
@@ -147,6 +149,14 @@ jobs:
             echo "⚠️ Manual trigger - artifacts will be built"
             echo "⚠️ Make sure Lambda CI/CD has completed for this commit"
             echo "ci_status=manual" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Debug output
+        run: |
+          echo "CI status output: ${{ steps.ci_check.outputs.ci_status }}"
+          if [ -z "${{ steps.ci_check.outputs.ci_status }}" ]; then
+            echo "⚠️ WARNING: ci_status output is empty!"
+            exit 1
           fi
   
   # Download artifacts from CI build
