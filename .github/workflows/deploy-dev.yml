@@ -8,6 +8,14 @@ on:
       - completed
     branches:
       - dev
+  # Also trigger on push to dev (will check CI status)
+  push:
+    branches:
+      - dev
+    paths:
+      - 'lambda/**'
+      - 'terraform/**'
+      - '.github/workflows/deploy-dev.yml'
   # Allow manual triggers
   workflow_dispatch:
     inputs:
@@ -27,18 +35,51 @@ jobs:
   check-ci-status:
     name: Check CI Status
     runs-on: ubuntu-latest
-    # Only proceed if CI succeeded OR manual dispatch with skip flag
+    # Only proceed if CI succeeded OR manual dispatch with skip flag OR push (will check CI status)
     if: |
       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
-      (github.event_name == 'workflow_dispatch' && (inputs.skip_ci_check == 'true' || inputs.skip_ci_check == true))
+      (github.event_name == 'workflow_dispatch' && (inputs.skip_ci_check == 'true' || inputs.skip_ci_check == true)) ||
+      github.event_name == 'push'
     
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Install jq (if needed)
+        run: |
+          if ! command -v jq &> /dev/null; then
+            sudo apt-get update && sudo apt-get install -y jq
+          else
+            echo "jq is already installed"
+          fi
+      
       - name: Verify CI passed
         run: |
           if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            echo "✅ Lambda CI/CD completed successfully"
+            echo "✅ Lambda CI/CD completed successfully (workflow_run trigger)"
             echo "CI workflow run: ${{ github.event.workflow_run.html_url }}"
             echo "CI workflow SHA: ${{ github.event.workflow_run.head_sha }}"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            echo "🔍 Checking if Lambda CI/CD has passed for commit ${{ github.sha }}"
+            # Wait a bit for CI to potentially complete
+            sleep 10
+            # Check CI status using GitHub API
+            CI_STATUS=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/runs?branch=dev&head_sha=${{ github.sha }}&per_page=5" | \
+              jq -r '.workflow_runs[] | select(.name == "Lambda CI/CD") | .conclusion' | head -1)
+            
+            if [ "$CI_STATUS" = "success" ]; then
+              echo "✅ Lambda CI/CD has passed for this commit"
+            elif [ "$CI_STATUS" = "failure" ] || [ "$CI_STATUS" = "cancelled" ]; then
+              echo "❌ Lambda CI/CD has failed or was cancelled for this commit"
+              echo "⚠️ Proceeding anyway, but deployment may fail"
+            elif [ -z "$CI_STATUS" ]; then
+              echo "⚠️ Lambda CI/CD status not found yet - it may still be running"
+              echo "⚠️ Proceeding, but ensure CI passes before deploying to production"
+            else
+              echo "⚠️ Lambda CI/CD status: $CI_STATUS"
+              echo "⚠️ Proceeding, but ensure CI passes before deploying"
+            fi
           else
             echo "⚠️ Manual trigger with CI check skipped"
             echo "⚠️ Make sure Lambda CI/CD has completed for this commit"
