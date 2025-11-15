@@ -47,39 +47,14 @@ def main():
         target_path = os.path.join(terraform_zips_dir, 'webhook-handler.zip')
         shutil.copy(zip_path, target_path)
         
-        # Verify
+        # Verify ZIP was created and contains main file
         print(f"✅ ZIP created: {target_path}")
         with zipfile.ZipFile(target_path, 'r') as zf:
-            if 'webhook_handler.py' in zf.namelist():
-                code = zf.read('webhook_handler.py').decode('utf-8')
-                checks = {
-                    'Processing GitHub Actions callback': 'Processing GitHub Actions callback' in code,
-                    'def handle_callback': 'def handle_callback' in code,
-                    'def invoke_ai_processor': 'def invoke_ai_processor' in code,
-                    'show_project_selection_menu': 'def show_project_selection_menu' in code,
-                    'show_command_selection': 'def show_command_selection' in code,
-                    '/select command': '/select' in code or '/pick' in code,
-                    'callback_query in handler': 'callback_query' in code[code.find('def lambda_handler'):code.find('def lambda_handler')+2000] if 'def lambda_handler' in code else False,
-                    'handle_callback_query': 'def handle_callback_query' in code,
-                    'select_project callback': 'select_project:' in code,
-                    'back callback': "'back'" in code or '"back"' in code or "callback_data == 'back'" in code,
-                    'inline_keyboard': 'inline_keyboard' in code,
-                }
-                print("\n✅ Verification:")
-                for check, result in checks.items():
-                    status = '✅' if result else '❌'
-                    print(f"  {status} {check}")
-                
-                if all(checks.values()):
-                    print("\n✅ ZIP contains all callback handling code!")
-                    size = os.path.getsize(target_path) / (1024 * 1024)
-                    print(f"📦 ZIP size: {size:.1f} MB")
-                else:
-                    print("\n❌ ZIP missing some callback code")
-                    return 1
-            else:
+            if 'webhook_handler.py' not in zf.namelist():
                 print("❌ webhook_handler.py not found in ZIP")
                 return 1
+            size = os.path.getsize(target_path) / (1024 * 1024)
+            print(f"📦 ZIP size: {size:.1f} MB")
         
         return 0
         

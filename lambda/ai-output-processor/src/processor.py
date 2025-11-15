@@ -48,7 +48,6 @@ class ProcessingConfig:
     enable_ai_processing: bool = False
     max_message_length: int = 3500
     max_messages: int = 10
-    # Note: ai_threshold removed - hybrid workflow uses content-based triggers (errors, high-risk) instead
 
 class TerraformOutputProcessor:
     """Processes Terraform outputs with smart summarization and formatting"""
