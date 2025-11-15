@@ -253,18 +253,22 @@ def trigger_github_workflow(command, chat_id, project=None, token=None):
             raise ValueError("Missing GitHub configuration")
 
         # Convert project to string if provided, with maximum recursion protection
-        # ONLY accept if it's already a string - don't try to convert anything else
-        # This avoids any potential recursion from custom __str__ methods
+        # Only convert simple built-in types to avoid recursion from custom __str__ methods
         project_str = None
         try:
             # Use type() to check - this is the safest way
             project_type = type(project)
-            # Only use it if it's already a string - don't convert other types
             if project_type is str:
                 # It's a string - use it directly
                 project_str = project
-            # For None or any other type, just use None
-            # This is the safest approach - no conversions, no method calls
+            elif project_type in (int, float, bool):
+                # Safe built-in types - convert to string (these can't have custom __str__ that causes recursion)
+                try:
+                    project_str = str(project)
+                except RecursionError:
+                    project_str = None
+            # For None or any other type (complex objects), just use None
+            # This avoids recursion from custom __str__ methods on complex objects
         except (RecursionError, Exception):
             # If even checking the type causes issues, just use None
             project_str = None
