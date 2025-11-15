@@ -312,6 +312,12 @@ jobs:
           cd terraform-config
           export AWS_REGION="${{ steps.project.outputs.project-region }}"
           export AWS_DEFAULT_REGION="${{ steps.project.outputs.project-region }}"
+          # Re-initialize to ensure providers are available (steps run in separate shells)
+          terraform init \
+            -backend-config="bucket=${{ steps.project.outputs.project-bucket }}" \
+            -backend-config="key=${{ steps.project.outputs.project-key }}" \
+            -backend-config="region=${{ steps.project.outputs.project-region }}" \
+            -upgrade
           # Select workspace again (GitHub Actions steps run in separate shells)
           if [[ -n "${{ steps.init.outputs.workspace }}" ]]; then
             echo "Selecting workspace: ${{ steps.init.outputs.workspace }}"
@@ -341,6 +347,12 @@ jobs:
           cd terraform-config
           export AWS_REGION="${{ steps.project.outputs.project-region }}"
           export AWS_DEFAULT_REGION="${{ steps.project.outputs.project-region }}"
+          # Re-initialize to ensure providers are available (steps run in separate shells)
+          terraform init \
+            -backend-config="bucket=${{ steps.project.outputs.project-bucket }}" \
+            -backend-config="key=${{ steps.project.outputs.project-key }}" \
+            -backend-config="region=${{ steps.project.outputs.project-region }}" \
+            -upgrade
           # Select workspace again (GitHub Actions steps run in separate shells)
           if [[ -n "${{ steps.init.outputs.workspace }}" ]]; then
             echo "Selecting workspace: ${{ steps.init.outputs.workspace }}"
@@ -367,6 +379,13 @@ jobs:
           cd terraform-config
           export AWS_REGION="${{ steps.project.outputs.project-region }}"
           export AWS_DEFAULT_REGION="${{ steps.project.outputs.project-region }}"
+          
+          # Re-initialize to ensure providers are available (steps run in separate shells)
+          terraform init \
+            -backend-config="bucket=${{ steps.project.outputs.project-bucket }}" \
+            -backend-config="key=${{ steps.project.outputs.project-key }}" \
+            -backend-config="region=${{ steps.project.outputs.project-region }}" \
+            -upgrade
           
           echo "Project: ${{ steps.project.outputs.project-selected }}"
           
