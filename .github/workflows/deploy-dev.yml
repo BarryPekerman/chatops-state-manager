@@ -2,16 +2,24 @@ name: Deploy to Dev
 
 # Execution flow:
 # 1. Push to dev branch (with lambda/** changes) → Lambda CI/CD triggers
-# 2. Lambda CI/CD completes successfully → This workflow triggers via workflow_run
-# 3. This workflow builds artifacts and deploys to dev
+# 2. Lambda CI/CD completes successfully → This workflow triggers via workflow_run OR push
+# 3. This workflow checks CI status, builds artifacts, and deploys to dev
 on:
-  # Trigger after Lambda CI/CD completes successfully
+  # Trigger after Lambda CI/CD completes successfully (primary trigger)
   workflow_run:
     workflows: ["Lambda CI/CD"]
     types:
       - completed
     branches:
       - dev
+  # Fallback: trigger on push and check CI status (more reliable than workflow_run alone)
+  push:
+    branches:
+      - dev
+    paths:
+      - 'lambda/**'
+      - 'terraform/**'
+      - '.github/workflows/deploy-dev.yml'
   # Allow manual triggers (will build artifacts if needed)
   workflow_dispatch:
     inputs:
@@ -27,26 +35,72 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Check if CI workflow succeeded (unless manually skipped)
+  # Check if CI workflow succeeded
   check-ci-status:
     name: Check CI Status
     runs-on: ubuntu-latest
-    # Only proceed if CI succeeded OR manual dispatch
-    if: |
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
-      github.event_name == 'workflow_dispatch'
-    
+    # Always run this job to check CI status
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Install jq
+        run: |
+          if ! command -v jq &> /dev/null; then
+            sudo apt-get update && sudo apt-get install -y jq
+          fi
+      
       - name: Verify CI passed
+        id: ci_check
         run: |
           if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            echo "✅ Lambda CI/CD completed successfully"
-            echo "CI workflow run: ${{ github.event.workflow_run.html_url }}"
-            echo "CI workflow SHA: ${{ github.event.workflow_run.head_sha }}"
-            echo "CI workflow conclusion: ${{ github.event.workflow_run.conclusion }}"
+            # Triggered by workflow_run - CI already completed
+            if [ "${{ github.event.workflow_run.conclusion }}" = "success" ]; then
+              echo "✅ Lambda CI/CD completed successfully (workflow_run trigger)"
+              echo "CI workflow run: ${{ github.event.workflow_run.html_url }}"
+              echo "CI workflow SHA: ${{ github.event.workflow_run.head_sha }}"
+              echo "ci_status=success" >> $GITHUB_OUTPUT
+            else
+              echo "❌ Lambda CI/CD did not succeed (conclusion: ${{ github.event.workflow_run.conclusion }})"
+              echo "ci_status=failed" >> $GITHUB_OUTPUT
+              exit 1
+            fi
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            # Triggered by push - need to check CI status
+            echo "🔍 Checking if Lambda CI/CD has passed for commit ${{ github.sha }}"
+            
+            # Wait a bit for CI to potentially complete
+            sleep 15
+            
+            # Check CI status using GitHub API
+            CI_RUNS=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/runs?branch=dev&head_sha=${{ github.sha }}&per_page=10")
+            
+            CI_STATUS=$(echo "$CI_RUNS" | jq -r '.workflow_runs[] | select(.name == "Lambda CI/CD") | .conclusion' | head -1)
+            CI_RUN_ID=$(echo "$CI_RUNS" | jq -r '.workflow_runs[] | select(.name == "Lambda CI/CD") | .id' | head -1)
+            
+            if [ "$CI_STATUS" = "success" ]; then
+              echo "✅ Lambda CI/CD has passed for this commit"
+              echo "CI workflow run ID: $CI_RUN_ID"
+              echo "ci_status=success" >> $GITHUB_OUTPUT
+            elif [ "$CI_STATUS" = "failure" ] || [ "$CI_STATUS" = "cancelled" ]; then
+              echo "❌ Lambda CI/CD has failed or was cancelled for this commit"
+              echo "ci_status=failed" >> $GITHUB_OUTPUT
+              exit 1
+            elif [ -z "$CI_STATUS" ] || [ "$CI_STATUS" = "null" ]; then
+              echo "⚠️ Lambda CI/CD status not found yet - it may still be running"
+              echo "⚠️ Proceeding with deployment, but ensure CI passes"
+              echo "ci_status=running" >> $GITHUB_OUTPUT
+            else
+              echo "⚠️ Lambda CI/CD status: $CI_STATUS"
+              echo "⚠️ Proceeding with deployment"
+              echo "ci_status=$CI_STATUS" >> $GITHUB_OUTPUT
+            fi
           else
-            echo "⚠️ Manual trigger - artifacts will be built if not found"
-            echo "⚠️ Make sure Lambda CI/CD has completed for this commit if you want to use pre-built artifacts"
+            # Manual dispatch
+            echo "⚠️ Manual trigger - artifacts will be built"
+            echo "⚠️ Make sure Lambda CI/CD has completed for this commit"
+            echo "ci_status=manual" >> $GITHUB_OUTPUT
           fi
   
   # Download artifacts from CI build
@@ -54,7 +108,12 @@ jobs:
     name: Prepare Artifacts
     runs-on: ubuntu-latest
     needs: check-ci-status
-    # Use the workflow_run SHA if available (from CI), otherwise use current SHA (manual dispatch)
+    # Only proceed if CI passed (or manual dispatch)
+    if: |
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'push' && (needs.check-ci-status.outputs.ci_status == 'success' || needs.check-ci-status.outputs.ci_status == 'running')) ||
+      github.event_name == 'workflow_dispatch'
+    # Use the workflow_run SHA if available (from CI), otherwise use current SHA
     env:
       WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
     
