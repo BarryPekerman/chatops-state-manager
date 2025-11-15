@@ -1,0 +1,143 @@
+version: '3.8'
+
+services:
+  # LocalStack - Mock AWS services
+  localstack:
+    image: localstack/localstack:3.0
+    container_name: chatops-localstack
+    ports:
+      - "4566:4566"
+      - "4571:4571"
+    environment:
+      - SERVICES=lambda,secretsmanager,apigateway,sts
+      - DEBUG=1
+      - LAMBDA_EXECUTOR=local
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "./tests/integration/localstack-init:/etc/localstack/init/ready.d"
+    networks:
+      - chatops-test
+
+  # Mock GitHub Actions webhook server
+  mock-github:
+    build:
+      context: ./tests/integration/mock-github
+      dockerfile: Dockerfile
+    container_name: chatops-mock-github
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_ENV=development
+    networks:
+      - chatops-test
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Webhook Handler Lambda (running as container)
+  webhook-handler:
+    build:
+      context: ./lambda/webhook-handler
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: chatops-webhook-handler
+    environment:
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AUTHORIZED_CHAT_ID=123456789
+      - GITHUB_OWNER=test-owner
+      - GITHUB_REPO=test-repo
+    depends_on:
+      localstack:
+        condition: service_started
+      mock-github:
+        condition: service_healthy
+    networks:
+      - chatops-test
+    command:
+      - /bin/sh
+      - -c
+      - |
+        python -c "import webhook_handler; import json; print(webhook_handler.lambda_handler({'body': json.dumps({'message': {'chat': {'id': 123456789}, 'text': '/status', 'from': {'id': 123456789, 'username': 'test'}}})}, None))"
+    profiles:
+      - manual  # Only run when explicitly requested
+
+  # AI Output Processor Lambda (running as container)
+  ai-processor:
+    build:
+      context: ./lambda/ai-output-processor
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: chatops-ai-processor
+    environment:
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - ENABLE_AI_PROCESSING=false
+      - MAX_MESSAGE_LENGTH=3500
+    depends_on:
+      - localstack
+    networks:
+      - chatops-test
+    profiles:
+      - manual
+
+  # Telegram Bot Lambda (running as container)
+  telegram-bot:
+    build:
+      context: ./lambda/telegram-bot
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: chatops-telegram-bot
+    environment:
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AUTHORIZED_CHAT_ID=123456789
+      - API_GATEWAY_URL=http://webhook-handler:8080
+    depends_on:
+      - localstack
+    networks:
+      - chatops-test
+    profiles:
+      - manual
+
+  # Test Runner - Runs integration tests
+  test-runner:
+    build:
+      context: ./tests/integration
+      dockerfile: Dockerfile
+    container_name: chatops-test-runner
+    environment:
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - MOCK_GITHUB_URL=http://mock-github:5000
+      - WEBHOOK_HANDLER_URL=http://webhook-handler:8080
+    depends_on:
+      localstack:
+        condition: service_started
+      mock-github:
+        condition: service_healthy
+    networks:
+      - chatops-test
+    volumes:
+      - ./tests/integration:/tests
+      - ./lambda:/lambda:ro
+    command: pytest /tests -v --tb=short --color=yes
+
+networks:
+  chatops-test:
+    driver: bridge

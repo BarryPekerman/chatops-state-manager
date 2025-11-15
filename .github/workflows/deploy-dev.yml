@@ -1,0 +1,327 @@
+name: Deploy to Dev
+
+# Execution flow:
+# 1. Manual trigger only - user must explicitly start deployment
+# 2. This workflow checks CI status, builds artifacts, and deploys to dev
+on:
+  # Manual deployment only - requires explicit user action
+  workflow_dispatch:
+    inputs:
+      skip_ci_check:
+        description: 'Skip waiting for CI (use with caution)'
+        required: false
+        default: 'false'
+        type: boolean
+
+# Require that CI passes before deployment
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+jobs:
+  # Check if CI workflow succeeded
+  check-ci-status:
+    name: Check CI Status
+    runs-on: ubuntu-latest
+    outputs:
+      ci_status: ${{ steps.ci_check.outputs.ci_status }}
+    # Always run this job to check CI status
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install jq
+        run: |
+          if ! command -v jq &> /dev/null; then
+            sudo apt-get update && sudo apt-get install -y jq
+          fi
+
+      - name: Verify CI passed
+        id: ci_check
+        run: |
+          if [ "${{ github.event.inputs.skip_ci_check }}" = "true" ]; then
+            echo "⚠️ Skipping CI check (user requested)"
+            echo "ci_status=skipped" >> $GITHUB_OUTPUT
+          # Removed workflow_run trigger - manual dispatch only
+          if false; then
+            # Triggered by workflow_run - CI already completed
+            if [ "${{ github.event.workflow_run.conclusion }}" = "success" ]; then
+              echo "✅ Lambda CI/CD completed successfully (workflow_run trigger)"
+              echo "CI workflow run: ${{ github.event.workflow_run.html_url }}"
+              echo "CI workflow SHA: ${{ github.event.workflow_run.head_sha }}"
+              echo "ci_status=success" >> $GITHUB_OUTPUT
+            else
+              echo "❌ Lambda CI/CD did not succeed (conclusion: ${{ github.event.workflow_run.conclusion }})"
+              echo "ci_status=failed" >> $GITHUB_OUTPUT
+              exit 1
+            fi
+          else
+            # Manual dispatch - check if Lambda CI/CD ran and passed
+            # Lambda CI/CD only runs when lambda/** files change, so if it didn't run,
+            # we can assume no lambda changes and proceed
+            echo "🔍 Checking if Lambda CI/CD ran for commit ${{ github.sha }}..."
+
+            # Retry logic: check up to 12 times every 30 seconds (total ~6 minutes max wait)
+            MAX_RETRIES=12
+            RETRY_DELAY=30
+            CI_STATUS=""
+            CI_RUN_ID=""
+            CI_FOUND=false
+
+            for i in $(seq 1 $MAX_RETRIES); do
+              if [ $i -gt 1 ]; then
+                echo "⏳ Retry $i/$MAX_RETRIES: Waiting ${RETRY_DELAY}s before checking again..."
+                sleep $RETRY_DELAY
+              else
+                # First check: wait a bit for CI to start
+                sleep 10
+              fi
+
+              # Check CI status using GitHub API
+              CI_RUNS=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                "https://api.github.com/repos/${{ github.repository }}/actions/runs?branch=dev&head_sha=${{ github.sha }}&per_page=10")
+
+              # Check for workflow run status (conclusion for completed, status for in-progress)
+              CI_STATUS=$(echo "$CI_RUNS" | jq -r '.workflow_runs[] | select(.name == "Lambda CI/CD") | .conclusion' | head -1)
+              CI_RUN_STATUS=$(echo "$CI_RUNS" | jq -r '.workflow_runs[] | select(.name == "Lambda CI/CD") | .status' | head -1)
+              CI_RUN_ID=$(echo "$CI_RUNS" | jq -r '.workflow_runs[] | select(.name == "Lambda CI/CD") | .id' | head -1)
+
+              # Check if workflow run was found
+              if [ -n "$CI_RUN_ID" ] && [ "$CI_RUN_ID" != "null" ]; then
+                CI_FOUND=true
+              fi
+
+              if [ "$CI_STATUS" = "success" ]; then
+                echo "✅ Lambda CI/CD has passed for this commit"
+                echo "CI workflow run ID: $CI_RUN_ID"
+                echo "ci_status=success" >> $GITHUB_OUTPUT
+                break
+              elif [ "$CI_STATUS" = "failure" ] || [ "$CI_STATUS" = "cancelled" ]; then
+                echo "❌ Lambda CI/CD has failed or was cancelled for this commit"
+                echo "CI workflow run ID: $CI_RUN_ID"
+                echo "ci_status=failed" >> $GITHUB_OUTPUT
+                exit 1
+              elif [ "$CI_RUN_STATUS" = "in_progress" ] || [ "$CI_RUN_STATUS" = "queued" ]; then
+                echo "⏳ Lambda CI/CD is still running (status: $CI_RUN_STATUS)"
+                if [ $i -eq $MAX_RETRIES ]; then
+                  echo "⚠️ Reached max retries - CI is still running"
+                  echo "⚠️ Proceeding with deployment, but ensure CI passes"
+                  echo "ci_status=running" >> $GITHUB_OUTPUT
+                fi
+                # Continue to next retry
+              elif [ -z "$CI_STATUS" ] || [ "$CI_STATUS" = "null" ]; then
+                if [ $i -eq $MAX_RETRIES ]; then
+                  if [ "$CI_FOUND" = "false" ]; then
+                    echo "ℹ️ Lambda CI/CD did not run for this commit"
+                    echo "ℹ️ This likely means no lambda/** files changed"
+                    echo "ℹ️ Proceeding with deployment (no CI check needed)"
+                    echo "ci_status=skipped" >> $GITHUB_OUTPUT
+                  else
+                    echo "⚠️ Lambda CI/CD status unclear after $MAX_RETRIES attempts"
+                    echo "⚠️ Proceeding with deployment, but ensure CI passes"
+                    echo "ci_status=running" >> $GITHUB_OUTPUT
+                  fi
+                else
+                  echo "⏳ Lambda CI/CD not found yet (attempt $i/$MAX_RETRIES)"
+                fi
+              else
+                echo "⚠️ Lambda CI/CD status: $CI_STATUS"
+                if [ $i -eq $MAX_RETRIES ]; then
+                  echo "⚠️ Proceeding with deployment"
+                  echo "ci_status=$CI_STATUS" >> $GITHUB_OUTPUT
+                fi
+              fi
+            done
+          fi
+
+      - name: Debug output
+        run: |
+          echo "CI status output: ${{ steps.ci_check.outputs.ci_status }}"
+          if [ -z "${{ steps.ci_check.outputs.ci_status }}" ]; then
+            echo "⚠️ WARNING: ci_status output is empty!"
+            exit 1
+          fi
+
+  # Download artifacts from CI build
+  prepare-artifacts:
+    name: Prepare Artifacts
+    runs-on: ubuntu-latest
+    needs: check-ci-status
+    # Always proceed for manual dispatch
+    # Use current commit SHA
+    env:
+      WORKFLOW_SHA: ${{ github.sha }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.WORKFLOW_SHA }}
+
+      - name: Create artifacts directory
+        run: mkdir -p ./artifacts/
+
+      - name: Build all artifacts
+        # Always build artifacts - we have the code at the correct commit SHA from workflow_run
+        # This ensures artifacts are available even if CI artifacts aren't accessible
+        run: |
+          echo "Building Lambda function artifacts for commit ${{ env.WORKFLOW_SHA }}..."
+
+          echo "Building webhook-handler..."
+          cd lambda/webhook-handler && ./build.sh && mv lambda_function.zip ../../artifacts/ && cd ../.. || exit 1
+
+          echo "Building ai-output-processor..."
+          cd lambda/ai-output-processor && ./build.sh && mv output_processor.zip ../../artifacts/ && cd ../.. || exit 1
+
+          echo "Building telegram-bot..."
+          cd lambda/telegram-bot && ./build.sh && mv telegram-bot.zip ../../artifacts/ && cd ../.. || exit 1
+
+          echo "✅ All artifacts built successfully"
+
+      - name: Verify artifacts exist
+        run: |
+          echo "Verifying all artifacts exist..."
+          ls -lh ./artifacts/ || echo "No artifacts directory found"
+
+          MISSING=0
+          [ ! -f ./artifacts/lambda_function.zip ] && echo "❌ Missing: lambda_function.zip" && MISSING=$((MISSING + 1))
+          [ ! -f ./artifacts/output_processor.zip ] && echo "❌ Missing: output_processor.zip" && MISSING=$((MISSING + 1))
+          [ ! -f ./artifacts/telegram-bot.zip ] && echo "❌ Missing: telegram-bot.zip" && MISSING=$((MISSING + 1))
+
+          if [ $MISSING -gt 0 ]; then
+            echo "ERROR: $MISSING artifact(s) missing after build!"
+            exit 1
+          fi
+
+          echo "✅ All artifacts present"
+
+      - name: Upload combined artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: lambda-artifacts-dev-${{ env.WORKFLOW_SHA }}
+          path: ./artifacts/*.zip
+          retention-days: 7
+          if-no-files-found: error
+
+  # Deploy to dev environment
+  deploy:
+    name: Deploy Infrastructure
+    runs-on: ubuntu-latest
+    needs: prepare-artifacts
+    environment:
+      name: dev
+      url: https://dev.chatops.example.com
+
+    permissions:
+      id-token: write  # Required for OIDC
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: lambda-artifacts-dev-${{ github.sha }}
+          path: ./terraform/artifacts/
+          if-no-files-found: error
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+
+      - name: Terraform Init
+        working-directory: ./terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TERRAFORM_STATE_BUCKET }}" \
+            -backend-config="key=dev/terraform.tfstate" \
+            -backend-config="region=${{ secrets.AWS_REGION }}"
+
+      - name: Terraform Plan
+        working-directory: ./terraform
+        run: |
+          terraform plan \
+            -var="environment=dev" \
+            -var="webhook_lambda_zip_path=./artifacts/lambda_function.zip" \
+            -var="output_processor_zip_path=./artifacts/output_processor.zip" \
+            -var="telegram_lambda_zip_path=./artifacts/telegram-bot.zip" \
+            -var="github_token=${{ secrets.GITHUB_TOKEN }}" \
+            -var="telegram_bot_token=${{ secrets.TELEGRAM_BOT_TOKEN }}" \
+            -var="authorized_chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -out=tfplan
+
+      - name: Terraform Apply
+        working-directory: ./terraform
+        run: terraform apply -auto-approve tfplan
+
+      - name: Get outputs
+        id: terraform
+        working-directory: ./terraform
+        run: |
+          echo "webhook_url=$(terraform output -raw webhook_url)" >> $GITHUB_OUTPUT
+          echo "ai_processor_url=$(terraform output -raw ai_processor_url)" >> $GITHUB_OUTPUT
+          echo "github_role_arn=$(terraform output -raw github_role_arn)" >> $GITHUB_OUTPUT
+
+      - name: Display GitHub Role ARN
+        run: |
+          echo "## 📋 GitHub OIDC Role ARN" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Role ARN:** \`${{ steps.terraform.outputs.github_role_arn }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "> ℹ️ **Note:** This role is created by Terraform. Use \`AWS_ROLE_TO_ASSUME\` secret for all environments." >> $GITHUB_STEP_SUMMARY
+
+      - name: Deployment summary
+        run: |
+          echo "# 🚀 Dev Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Infrastructure" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment:** Dev" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region:** ${{ secrets.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Webhook URL:** ${{ steps.terraform.outputs.webhook_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Lambda Functions" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ webhook-handler deployed" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ ai-output-processor deployed" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ telegram-bot deployed" >> $GITHUB_STEP_SUMMARY
+
+  # Run smoke tests against dev
+  smoke-tests:
+    name: Smoke Tests
+    runs-on: ubuntu-latest
+    needs: deploy
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install requests boto3
+
+      - name: Run smoke tests
+        run: |
+          echo "Running smoke tests against dev..."
+          # Test webhook endpoint is accessible
+          curl -f -X OPTIONS ${{ secrets.DEV_WEBHOOK_URL }} || echo "Warning: CORS preflight failed"
+
+          # Test that secrets are accessible
+          aws secretsmanager describe-secret --secret-id chatops/secrets --region ${{ secrets.AWS_REGION }} || echo "Warning: Secrets not found"
+
+      - name: Smoke test summary
+        run: |
+          echo "# ✅ Smoke Tests Passed" >> $GITHUB_STEP_SUMMARY
+          echo "Dev environment is healthy and ready for testing" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,161 @@
+# Whitelist .gitignore - Ignore everything, then unignore specific files
+# This ensures only required files are tracked
+
+# Ignore everything by default
+/*
+
+# Unignore directories (but contents still ignored)
+!/.github/
+!/ansible/
+!/config/
+!/docs/
+!/lambda/
+!/scripts/
+!/terraform/
+!/tests/
+!/.gitignore
+!/.pre-commit-config.yaml
+!/.gitleaks.toml
+!/LICENSE
+!/README.md
+
+# Unignore root-level files
+!/*.md
+!/*.py
+!/*.sh
+!/*.toml
+!/*.yaml
+!/*.yml
+!/*.txt
+
+# Unignore specific file patterns
+!/.github/**/*
+!/ansible/**/*
+!/config/**/*
+!/docs/**/*
+!/lambda/**/*
+!/scripts/**/*
+!/terraform/**/*
+!/tests/**/*
+
+# Ignore sensitive/secret files (even if they match patterns above)
+install.conf
+terraform/terraform.tfvars
+terraform/environments/*/terraform.tfvars
+ansible/vars/bootstrap-secrets.yml
+ansible/vars/secrets.yml
+
+# Ignore build artifacts
+*.zip
+*.zip.backup
+*.zip.backup*
+*.zip.old
+*.zip.fixed
+terraform-zips/*.zip
+lambda/**/*.zip
+lambda/**/terraform-zips/
+
+# Ignore Terraform state and plan files
+*.tfstate
+*.tfstate.backup
+*.tfplan
+.terraform/
+.terraform.lock.hcl
+
+# Ignore Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Ignore test artifacts
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.hypothesis/
+*.cover
+
+# Ignore IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Ignore temporary files
+*.tmp
+*.log
+*.bak
+*.orig
+
+# Ignore environment files
+.env
+.env.local
+.venv/
+venv/
+env/
+
+# Ignore OS files
+Thumbs.db
+.DS_Store
+
+# Unignore example files (they're safe to commit)
+!**/*.example
+!**/*.example.*
+!**/terraform.tfvars.example
+!**/secrets.example.yml
+!**/bootstrap-secrets.example.yml
+!**/install.conf.example
+
+# Unignore specific required files in ignored directories
+!terraform/main.tf
+!terraform/variables.tf
+!terraform/outputs.tf
+!terraform/README.md
+!terraform/terraform.tfvars.example
+!terraform/environments/**/*.example
+!terraform/environments/README.md
+
+# Unignore Lambda source files
+!lambda/**/*.py
+!lambda/**/*.txt
+!lambda/**/*.sh
+!lambda/**/Dockerfile
+!lambda/**/README.md
+
+# Unignore test files
+!**/test_*.py
+!**/tests/**/*.py
+!**/tests/**/*.txt
+!**/tests/**/*.sh
+!**/tests/**/Dockerfile
+
+# Unignore documentation
+!**/*.md
+
+# Unignore configuration files
+!docker-compose*.yml
+!*.toml
+!.pre-commit-config.yaml
+
+# Unignore scripts
+!scripts/**/*.sh
+!scripts/**/*.py
+!scripts/**/*.md
+
+# Unignore Ansible files
+!ansible/**/*.yml
+!ansible/**/*.py
+!ansible/**/*.md
+
+# Unignore GitHub workflows
+!.github/workflows/*.yml
+
+# Unignore build scripts
+!build*.py
+!rebuild*.py
