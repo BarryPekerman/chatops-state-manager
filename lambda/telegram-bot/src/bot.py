@@ -44,7 +44,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     Lambda handler for Telegram bot webhook.
 
     This function receives Telegram webhooks and forwards commands
-    to the main API Gateway webhook handler.
+    to the main API Gateway webhook handler. It acts as a proxy
+    between Telegram and the main webhook handler.
     """
     try:
         # Parse the request body

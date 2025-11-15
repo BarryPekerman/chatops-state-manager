@@ -71,9 +71,9 @@ jobs:
             # we can assume no lambda changes and proceed
             echo "🔍 Checking if Lambda CI/CD ran for commit ${{ github.sha }}..."
             
-            # Retry logic: check up to 6 times with increasing delays (total ~2 minutes max wait)
-            MAX_RETRIES=6
-            RETRY_DELAY=20
+            # Retry logic: check up to 12 times every 30 seconds (total ~6 minutes max wait)
+            MAX_RETRIES=12
+            RETRY_DELAY=30
             CI_STATUS=""
             CI_RUN_ID=""
             CI_FOUND=false
