@@ -1,0 +1,29 @@
+# ChatOps Terraform Manager - Configuration File
+# Copy this file to install.conf and fill in your values
+#
+# WARNING: install.conf contains sensitive secrets and should NEVER be committed to git
+
+# GitHub Configuration
+GITHUB_OWNER="your-github-username"
+GITHUB_REPO="your-repo-name"
+GITHUB_TOKEN="ghp_your_github_token_here"
+
+# S3 Backend Configuration
+# Note: The S3 bucket must exist before running this project
+S3_BUCKET_NAME="your-existing-s3-bucket"
+S3_STATE_KEY="dev/terraform.tfstate"
+
+# Telegram Bot Configuration
+# Get bot token from @BotFather on Telegram
+TELEGRAM_BOT_TOKEN="1234567890:ABCdefGHIjklMNOpqrsTUVwxyz"
+# Get your chat ID by messaging your bot and checking: https://api.telegram.org/bot<TOKEN>/getUpdates
+AUTHORIZED_CHAT_ID="123456789"
+
+# AWS Configuration
+AWS_REGION="eu-north-1"
+
+# Optional: AI Processing
+ENABLE_AI_PROCESSING="false"
+MAX_MESSAGE_LENGTH="3500"
+MAX_MESSAGES="10"
+AI_THRESHOLD="1000"

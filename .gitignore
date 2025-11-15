@@ -13,12 +13,10 @@
 !/.gitleaks.toml
 !/LICENSE
 !/README.md
-!/COMMIT_STRATEGY.md
 !/MANIFEST.txt
 !/docker-compose.test.yml
 !/install.conf.example
 !/build_all_lambdas.py
-!/rebuild_webhook_zip.py
 
 # GitHub workflows
 !/.github/workflows/deploy-dev.yml
@@ -171,7 +169,3 @@ htmlcov/
 .venv/
 venv/
 env/
-
-# Ignore OS files
-Thumbs.db
-.DS_Store
