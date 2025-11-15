@@ -64,6 +64,7 @@
 
 # Terraform directory and files
 !/terraform/
+# Terraform files
 !/terraform/main.tf
 !/terraform/variables.tf
 !/terraform/outputs.tf
@@ -75,6 +76,8 @@
 !/terraform/environments/dev/
 !/terraform/environments/dev/terraform.tfvars.example
 !/terraform/environments/production/
+!/terraform/environments/README.md
+!/terraform/environments/dev/terraform.tfvars.example
 !/terraform/environments/production/terraform.tfvars.example
 
 # Terraform config
