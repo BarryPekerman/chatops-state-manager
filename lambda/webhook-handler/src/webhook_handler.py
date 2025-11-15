@@ -252,49 +252,41 @@ def trigger_github_workflow(command, chat_id, project=None, token=None):
         if not all([github_token, github_owner, github_repo]):
             raise ValueError("Missing GitHub configuration")
 
-        # Convert project to string if provided, with recursion protection
-        # Use a very defensive approach to avoid recursion
-        project_value = None
+        # Convert project to string if provided, with maximum recursion protection
+        # ONLY accept if it's already a string - don't try to convert anything else
+        # This avoids any potential recursion from custom __str__ methods
+        project_str = None
         try:
-            # First, try to get the type without triggering any comparisons
+            # Use type() to check - this is the safest way
             project_type = type(project)
+            # Only use it if it's already a string - don't convert other types
             if project_type is str:
-                # It's already a string, use it directly (safest case)
-                project_value = project
-            elif project_type is type(None):
-                # It's None, which is fine
-                project_value = None
-            else:
-                # For other types, try to convert but catch recursion
-                # This supports unit tests that pass ints, etc.
-                try:
-                    project_value = str(project)
-                except RecursionError:
-                    # If conversion causes recursion, skip it
-                    project_value = None
+                # It's a string - use it directly
+                project_str = project
+            # For None or any other type, just use None
+            # This is the safest approach - no conversions, no method calls
         except (RecursionError, Exception):
-            # If even checking the type causes recursion, just use None
-            project_value = None
+            # If even checking the type causes issues, just use None
+            project_str = None
         
         payload = {
             'event_type': 'telegram_command',
             'client_payload': {'command': command}
         }
         
-        # Only add project if it's a non-empty string
-        # Use identity check and length check to avoid any potential recursion
-        try:
-            if project_value is not None:
-                # Check length instead of comparing to empty string
-                try:
-                    if len(project_value) > 0:
-                        payload['client_payload']['project'] = project_value
-                except (RecursionError, Exception):
-                    # If length check causes issues, skip adding project
-                    pass
-        except (RecursionError, Exception):
-            # If checking project_value causes issues, skip it
-            pass
+        # Only add project if we have a non-empty string
+        # Use the safe string copy - check using identity, not truthiness
+        if project_str is not None:
+            try:
+                # Double-check it's actually a string and has length using type() not isinstance()
+                if type(project_str) is str:
+                    try:
+                        if len(project_str) > 0:
+                            payload['client_payload']['project'] = project_str
+                    except (RecursionError, Exception):
+                        pass
+            except (RecursionError, Exception):
+                pass
         if token:
             try:
                 payload['client_payload']['token'] = str(token) if token is not None else None
@@ -314,11 +306,19 @@ def trigger_github_workflow(command, chat_id, project=None, token=None):
 
         # Safely log and send feedback, catching any recursion errors
         try:
-            logger.info(f"Successfully triggered GitHub workflow for command: {command}, project: {project_value}")
+            # Build log message safely without using project_str in f-string
+            log_msg = "Successfully triggered GitHub workflow for command: " + str(command)
+            if project_str is not None:
+                try:
+                    # Append project info using string concatenation, not f-string
+                    log_msg = log_msg + ", project: " + project_str
+                except (RecursionError, Exception):
+                    pass
+            logger.info(log_msg)
         except RecursionError:
             logger.info("Successfully triggered GitHub workflow")
         try:
-            send_telegram_feedback(chat_id, command, project_value)
+            send_telegram_feedback(chat_id, command, project_str)
         except RecursionError:
             # If send_telegram_feedback causes recursion, skip it
             pass
@@ -326,7 +326,7 @@ def trigger_github_workflow(command, chat_id, project=None, token=None):
         return create_response(200, {
             'message': f'Command {command} triggered successfully',
             'command': command,
-            'project': project_value
+            'project': project_str
         })
 
     except requests.exceptions.RequestException as e:

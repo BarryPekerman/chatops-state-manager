@@ -178,16 +178,31 @@ class TestWebhookHandlerIntegration:
         os.environ['AWS_ENDPOINT_URL'] = LOCALSTACK_URL
         
         # Mock GitHub API to point to our mock server
+        # Store original post function to avoid any recursion issues
+        original_post = requests.post
+        
         with pytest.MonkeyPatch.context() as m:
             def mock_post(url, **kwargs):
-                # Redirect to mock GitHub
-                if 'github.com' in url:
-                    mock_url = url.replace(
-                        'https://api.github.com',
-                        MOCK_GITHUB_URL
-                    )
-                    return requests.post(mock_url, **kwargs)
-                return requests.post(url, **kwargs)
+                # Redirect to mock GitHub - use defensive string operations
+                # Convert url to string first to avoid any weird object issues
+                try:
+                    # Safely convert url to string
+                    if type(url) is str:
+                        url_str = url
+                    else:
+                        url_str = str(url) if url is not None else ''
+                    
+                    # Check if it's a GitHub URL using simple string check
+                    if 'github.com' in url_str:
+                        # Replace using simple string operations
+                        mock_url = url_str.replace('https://api.github.com', MOCK_GITHUB_URL)
+                        # Use original requests.post to avoid any circular issues
+                        return original_post(mock_url, **kwargs)
+                    # Not a GitHub URL, use original
+                    return original_post(url_str, **kwargs)
+                except (RecursionError, Exception):
+                    # If anything causes recursion, fall back to original
+                    return original_post(url, **kwargs)
             
             m.setattr(webhook_handler.requests, 'post', mock_post)
             
