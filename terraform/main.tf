@@ -17,7 +17,8 @@ provider "aws" {
 }
 
 module "chatops" {
-  source = "../../terraform-aws-chatops"
+  source  = "BarryPekerman/chatops/aws"
+  version = "0.1.1"
 
   # Core configuration
   name_prefix              = var.name_prefix

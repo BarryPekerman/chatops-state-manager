@@ -41,10 +41,13 @@ terraform apply
 
 ## 📦 Module Configuration
 
-This configuration uses the `terraform-aws-chatops` module from the local path:
+This configuration uses the `terraform-aws-chatops` module from the Terraform Registry:
 ```hcl
-source = "../../terraform-aws-chatops"
+source  = "BarryPekerman/chatops/aws"
+version = "0.1.1"
 ```
+
+The module is published at: https://registry.terraform.io/modules/BarryPekerman/chatops/aws
 
 ### 🔒 Built-in Security Features (Always Enabled)
 
@@ -131,12 +134,11 @@ All secrets should be:
 
 ### Module Not Found
 
-If you get a "module not found" error, ensure the `terraform-aws-chatops` module exists at:
-```
-../../terraform-aws-chatops/
-```
-
-Adjust the `source` path in `main.tf` if your directory structure differs.
+If you get a "module not found" error:
+1. Ensure you have internet access (module is downloaded from Terraform Registry)
+2. Run `terraform init` to download the module
+3. Check that the version `0.1.1` is available in the registry
+4. Verify your Terraform version is >= 1.0 (required for registry modules)
 
 ### Lambda ZIP Files Missing
 
@@ -164,6 +166,6 @@ terraform force-unlock <LOCK_ID>
 
 ## 📚 Additional Resources
 
-- [Terraform AWS ChatOps Module Documentation](../../terraform-aws-chatops/README.md)
+- [Terraform AWS ChatOps Module Registry](https://registry.terraform.io/modules/BarryPekerman/chatops/aws)
 - [Main Project README](../README.md)
 - [Deployment Guide](../docs/DEPLOYMENT.md)
