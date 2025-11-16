@@ -128,12 +128,12 @@
 
         - name: Extract github_owner from install.conf
           set_fact:
-            github_owner: "{{ install_conf_content.content | b64decode | regex_search('GITHUB_OWNER=\"([^\"]+)\"', '\\1') | first | default('') }}"
+            github_owner: "{{ install_conf_content.content | b64decode | regex_search('GITHUB_OWNER\\s*=\\s*\"([^\"]+)\"', '\\1') | first | default('') }}"
           when: (github_owner is not defined or github_owner == '') and install_conf_content is defined and install_conf_content.content is defined
 
         - name: Extract github_repo from install.conf
           set_fact:
-            github_repo: "{{ install_conf_content.content | b64decode | regex_search('GITHUB_REPO=\"([^\"]+)\"', '\\1') | first | default('') }}"
+            github_repo: "{{ install_conf_content.content | b64decode | regex_search('GITHUB_REPO\\s*=\\s*\"([^\"]+)\"', '\\1') | first | default('') }}"
           when: (github_repo is not defined or github_repo == '') and install_conf_content is defined and install_conf_content.content is defined
 
         - name: Read terraform.tfvars if it exists (fallback)
@@ -169,20 +169,53 @@
 
     - name: Extract values from install.conf
       block:
+        - name: Debug install.conf content
+          debug:
+            msg: "install_conf_content exists: {{ install_conf_content is defined }}, has content: {{ install_conf_content.content is defined if install_conf_content is defined else false }}"
+          when: install_conf_content is defined
+          changed_when: false
+
+        - name: Debug install.conf raw content (first 200 chars)
+          debug:
+            msg: "install.conf content preview: {{ (install_conf_content.content | b64decode)[:200] if install_conf_content is defined and install_conf_content.content is defined else 'NOT AVAILABLE' }}"
+          when: install_conf_content is defined and install_conf_content.content is defined
+          changed_when: false
+
         - name: Extract terraform_state_bucket from install.conf
           set_fact:
-            terraform_state_bucket: "{{ install_conf_content.content | b64decode | regex_search('S3_BUCKET_NAME=\"([^\"]+)\"', '\\1') | first | default('') }}"
-          when: (terraform_state_bucket is not defined or terraform_state_bucket == '') and install_conf_content is defined and install_conf_content.content is defined
+            terraform_state_bucket: "{{ (install_conf_content.content | b64decode) | regex_search('S3_BUCKET_NAME\\s*=\\s*\"([^\"]+)\"', '\\1') | first | default('') }}"
+          when:
+            - (terraform_state_bucket is not defined or terraform_state_bucket == '')
+            - install_conf_content is defined
+            - install_conf_content.content is defined
+            - (install_conf_content.content | b64decode | length) > 0
+
+        - name: Debug extracted terraform_state_bucket
+          debug:
+            msg: "Extracted terraform_state_bucket from install.conf: '{{ terraform_state_bucket }}'"
+          when:
+            - install_conf_content is defined
+            - terraform_state_bucket is defined
+            - terraform_state_bucket != ''
+          changed_when: false
 
         - name: Extract telegram_bot_token from install.conf
           set_fact:
-            telegram_bot_token: "{{ install_conf_content.content | b64decode | regex_search('TELEGRAM_BOT_TOKEN=\"([^\"]+)\"', '\\1') | first | default('') }}"
-          when: (telegram_bot_token is not defined or telegram_bot_token == '') and install_conf_content is defined and install_conf_content.content is defined
+            telegram_bot_token: "{{ (install_conf_content.content | b64decode) | regex_search('TELEGRAM_BOT_TOKEN\\s*=\\s*\"([^\"]+)\"', '\\1') | first | default('') }}"
+          when:
+            - (telegram_bot_token is not defined or telegram_bot_token == '')
+            - install_conf_content is defined
+            - install_conf_content.content is defined
+            - (install_conf_content.content | b64decode | length) > 0
 
         - name: Extract telegram_chat_id from install.conf
           set_fact:
-            telegram_chat_id: "{{ install_conf_content.content | b64decode | regex_search('AUTHORIZED_CHAT_ID=\"([^\"]+)\"', '\\1') | first | default('') }}"
-          when: (telegram_chat_id is not defined or telegram_chat_id == '') and install_conf_content is defined and install_conf_content.content is defined
+            telegram_chat_id: "{{ (install_conf_content.content | b64decode) | regex_search('AUTHORIZED_CHAT_ID\\s*=\\s*\"([^\"]+)\"', '\\1') | first | default('') }}"
+          when:
+            - (telegram_chat_id is not defined or telegram_chat_id == '')
+            - install_conf_content is defined
+            - install_conf_content.content is defined
+            - (install_conf_content.content | b64decode | length) > 0
 
     - name: Extract terraform_state_bucket from terraform.tfvars (fallback)
       set_fact:
@@ -210,7 +243,16 @@
       block:
         - name: Fail if terraform_state_bucket missing
           fail:
-            msg: "terraform_state_bucket must be set. Set in install.conf (S3_BUCKET_NAME), terraform.tfvars (terraform_backend_bucket), or TERRAFORM_STATE_BUCKET env var"
+            msg: |
+              terraform_state_bucket is REQUIRED for Terraform to initialize and deploy.
+
+              Set it in one of these ways:
+              1. install.conf: S3_BUCKET_NAME="your-bucket-name"
+              2. terraform.tfvars: terraform_backend_bucket = "your-bucket-name"
+              3. Environment variable: export TERRAFORM_STATE_BUCKET="your-bucket-name"
+
+              The bucket must exist before running bootstrap. This bucket stores Terraform state
+              and is used by both ChatOps infrastructure and managed projects.
           when: terraform_state_bucket is not defined or terraform_state_bucket == ''
 
         - name: Fail if telegram_bot_token missing
@@ -256,14 +298,25 @@
 
         - name: Extract values from install.conf for Terraform
           set_fact:
-            tf_github_owner: "{{ (install_conf_content.content | default(install_conf_for_tf.content | default(''))) | b64decode | regex_search('GITHUB_OWNER=\"([^\"]+)\"', '\\1') | first | default('') }}"
-            tf_github_repo: "{{ (install_conf_content.content | default(install_conf_for_tf.content | default(''))) | b64decode | regex_search('GITHUB_REPO=\"([^\"]+)\"', '\\1') | first | default('') }}"
-            tf_github_token: "{{ (install_conf_content.content | default(install_conf_for_tf.content | default(''))) | b64decode | regex_search('GITHUB_TOKEN=\"([^\"]+)\"', '\\1') | first | default('') }}"
-            tf_telegram_bot_token: "{{ (install_conf_content.content | default(install_conf_for_tf.content | default(''))) | b64decode | regex_search('TELEGRAM_BOT_TOKEN=\"([^\"]+)\"', '\\1') | first | default('') }}"
-            tf_authorized_chat_id: "{{ (install_conf_content.content | default(install_conf_for_tf.content | default(''))) | b64decode | regex_search('AUTHORIZED_CHAT_ID=\"([^\"]+)\"', '\\1') | first | default('') }}"
-            tf_s3_bucket: "{{ (install_conf_content.content | default(install_conf_for_tf.content | default(''))) | b64decode | regex_search('S3_BUCKET_NAME=\"([^\"]+)\"', '\\1') | first | default('') }}"
-            tf_aws_region: "{{ (install_conf_content.content | default(install_conf_for_tf.content | default(''))) | b64decode | regex_search('AWS_REGION=\"([^\"]+)\"', '\\1') | first | default('eu-west-1') }}"
+            tf_github_owner: "{{ (install_conf_content.content | default(install_conf_for_tf.content | default(''))) | b64decode | regex_search('GITHUB_OWNER\\s*=\\s*\"([^\"]+)\"', '\\1') | first | default('') }}"
+            tf_github_repo: "{{ (install_conf_content.content | default(install_conf_for_tf.content | default(''))) | b64decode | regex_search('GITHUB_REPO\\s*=\\s*\"([^\"]+)\"', '\\1') | first | default('') }}"
+            tf_github_token: "{{ (install_conf_content.content | default(install_conf_for_tf.content | default(''))) | b64decode | regex_search('GITHUB_TOKEN\\s*=\\s*\"([^\"]+)\"', '\\1') | first | default('') }}"
+            tf_telegram_bot_token: "{{ (install_conf_content.content | default(install_conf_for_tf.content | default(''))) | b64decode | regex_search('TELEGRAM_BOT_TOKEN\\s*=\\s*\"([^\"]+)\"', '\\1') | first | default('') }}"
+            tf_authorized_chat_id: "{{ (install_conf_content.content | default(install_conf_for_tf.content | default(''))) | b64decode | regex_search('AUTHORIZED_CHAT_ID\\s*=\\s*\"([^\"]+)\"', '\\1') | first | default('') }}"
+            tf_s3_bucket: "{{ (install_conf_content.content | default(install_conf_for_tf.content | default(''))) | b64decode | regex_search('S3_BUCKET_NAME\\s*=\\s*\"([^\"]+)\"', '\\1') | first | default('') }}"
+            tf_aws_region: "{{ (install_conf_content.content | default(install_conf_for_tf.content | default(''))) | b64decode | regex_search('AWS_REGION\\s*=\\s*\"([^\"]+)\"', '\\1') | first | default('eu-west-1') }}"
           when: not tfvars_file.stat.exists and (install_conf_content is defined or install_conf_for_tf is defined)
+
+        - name: Debug extracted values for terraform.tfvars generation
+          debug:
+            msg:
+              - "Extracted from install.conf:"
+              - "  tf_github_owner: '{{ tf_github_owner }}'"
+              - "  tf_github_repo: '{{ tf_github_repo }}'"
+              - "  tf_s3_bucket: '{{ tf_s3_bucket }}'"
+              - "  tf_aws_region: '{{ tf_aws_region }}'"
+          when: not tfvars_file.stat.exists
+          changed_when: false
 
         - name: Generate terraform.tfvars from install.conf
           copy:
@@ -317,9 +370,19 @@
             msg: "✅ Created terraform.tfvars from install.conf"
           when: not tfvars_file.stat.exists
 
-        - name: Fail if terraform.tfvars still missing
+        - name: Fail if terraform.tfvars still missing and required values not in install.conf
           fail:
-            msg: "terraform.tfvars not found and install.conf doesn't contain required values. Please create terraform.tfvars manually or ensure install.conf has all required values."
+            msg: |
+              terraform.tfvars not found and install.conf is missing required values.
+
+              Required in install.conf:
+              - GITHUB_OWNER
+              - GITHUB_REPO
+              - S3_BUCKET_NAME (REQUIRED - Terraform needs this to initialize)
+
+              Please either:
+              1. Create terraform.tfvars manually with all required values, OR
+              2. Ensure install.conf has GITHUB_OWNER, GITHUB_REPO, and S3_BUCKET_NAME
           when: not tfvars_file.stat.exists and (tf_github_owner == '' or tf_github_repo == '' or tf_s3_bucket == '')
 
     - name: Check if Terraform is initialized
@@ -414,7 +477,7 @@
           github_secrets:
             AWS_ROLE_TO_ASSUME: "{{ terraform_outputs.github_role_arn }}"
             AWS_REGION: "eu-west-1"
-            TERRAFORM_STATE_BUCKET: "{{ terraform_state_bucket }}"
+            TERRAFORM_STATE_BUCKET: "{{ terraform_state_bucket | default('') }}"
             TELEGRAM_BOT_TOKEN: "{{ telegram_bot_token }}"
             TELEGRAM_CHAT_ID: "{{ telegram_chat_id }}"
             {% if terraform_outputs.ai_processor_url %}
@@ -464,7 +527,7 @@
             github_secrets_dict:
               AWS_ROLE_TO_ASSUME: "{{ terraform_outputs.github_role_arn }}"
               AWS_REGION: "eu-west-1"
-              TERRAFORM_STATE_BUCKET: "{{ terraform_state_bucket }}"
+              TERRAFORM_STATE_BUCKET: "{{ terraform_state_bucket | default('') }}"
               TELEGRAM_BOT_TOKEN: "{{ telegram_bot_token }}"
               TELEGRAM_CHAT_ID: "{{ telegram_chat_id }}"
               CALLBACK_URL: "{{ terraform_outputs.ai_processor_url | default('') }}"
