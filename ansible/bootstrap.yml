@@ -117,35 +117,55 @@
               - "✅ Python: {{ python_version.stdout_lines[0] if python_version.stdout_lines is defined else python_version.stdout }}"
               - "✅ GitHub Token: {{ 'Set from GitHub CLI' if github_token_from_cli is defined and github_token_from_cli != '' else 'Set from environment' }}"
 
-    - name: Get GitHub repository info from Terraform vars
+    - name: Get GitHub repository info from install.conf or terraform.tfvars
       block:
-        - name: Read terraform.tfvars
+        - name: Read install.conf if it exists
+          slurp:
+            src: "{{ project_root }}/install.conf"
+          register: install_conf_content
+          failed_when: false
+          changed_when: false
+
+        - name: Extract github_owner from install.conf
+          set_fact:
+            github_owner: "{{ install_conf_content.content | b64decode | regex_search('GITHUB_OWNER=\"([^\"]+)\"', '\\1') | first | default('') }}"
+          when: (github_owner is not defined or github_owner == '') and install_conf_content is defined and install_conf_content.content is defined
+
+        - name: Extract github_repo from install.conf
+          set_fact:
+            github_repo: "{{ install_conf_content.content | b64decode | regex_search('GITHUB_REPO=\"([^\"]+)\"', '\\1') | first | default('') }}"
+          when: (github_repo is not defined or github_repo == '') and install_conf_content is defined and install_conf_content.content is defined
+
+        - name: Read terraform.tfvars if it exists (fallback)
           slurp:
             src: "{{ terraform_dir }}/terraform.tfvars"
           register: tfvars_content
-          when: github_owner is not defined or github_repo is not defined
+          failed_when: false
+          changed_when: false
+          when: github_owner is not defined or github_repo is not defined or github_owner == '' or github_repo == ''
 
-        - name: Extract github_owner from terraform.tfvars
+        - name: Extract github_owner from terraform.tfvars (fallback)
           set_fact:
             github_owner: "{{ tfvars_content.content | b64decode | regex_search('github_owner\\s*=\\s*\"([^\"]+)\"', '\\1') | first }}"
-          when: (github_owner is not defined or github_owner == '') and tfvars_content is defined
+          when: (github_owner is not defined or github_owner == '') and tfvars_content is defined and tfvars_content.content is defined
 
-        - name: Extract github_repo from terraform.tfvars
+        - name: Extract github_repo from terraform.tfvars (fallback)
           set_fact:
             github_repo: "{{ tfvars_content.content | b64decode | regex_search('github_repo\\s*=\\s*\"([^\"]+)\"', '\\1') | first }}"
-          when: (github_repo is not defined or github_repo == '') and tfvars_content is defined
+          when: (github_repo is not defined or github_repo == '') and tfvars_content is defined and tfvars_content.content is defined
 
         - name: Fail if GitHub info missing
           fail:
-            msg: "github_owner and github_repo must be set. Either set them as variables or in terraform.tfvars"
+            msg: "github_owner and github_repo must be set. Set them in install.conf (GITHUB_OWNER, GITHUB_REPO) or terraform.tfvars (github_owner, github_repo), or pass as variables"
           when: github_owner is not defined or github_repo is not defined or github_owner == '' or github_repo == ''
 
-    - name: Read install.conf if it exists
+    - name: Read install.conf if it exists (if not already read)
       slurp:
         src: "{{ project_root }}/install.conf"
       register: install_conf_content
       failed_when: false
       changed_when: false
+      when: install_conf_content is not defined
 
     - name: Extract values from install.conf
       block:
@@ -220,10 +240,87 @@
         path: "{{ terraform_dir }}/terraform.tfvars"
       register: tfvars_file
 
-    - name: Fail if terraform.tfvars missing
-      fail:
-        msg: "terraform.tfvars not found! Please create it from terraform.tfvars.example"
-      when: not tfvars_file.stat.exists
+    - name: Create terraform.tfvars from install.conf if it doesn't exist
+      block:
+        - name: Ensure install.conf was read
+          set_fact:
+            install_conf_for_tf: "{{ install_conf_content }}"
+          when: install_conf_content is defined
+
+        - name: Read install.conf if not already read
+          slurp:
+            src: "{{ project_root }}/install.conf"
+          register: install_conf_for_tf
+          when: install_conf_content is not defined
+          failed_when: false
+
+        - name: Extract values from install.conf for Terraform
+          set_fact:
+            tf_github_owner: "{{ (install_conf_content.content | default(install_conf_for_tf.content | default(''))) | b64decode | regex_search('GITHUB_OWNER=\"([^\"]+)\"', '\\1') | first | default('') }}"
+            tf_github_repo: "{{ (install_conf_content.content | default(install_conf_for_tf.content | default(''))) | b64decode | regex_search('GITHUB_REPO=\"([^\"]+)\"', '\\1') | first | default('') }}"
+            tf_github_token: "{{ (install_conf_content.content | default(install_conf_for_tf.content | default(''))) | b64decode | regex_search('GITHUB_TOKEN=\"([^\"]+)\"', '\\1') | first | default('') }}"
+            tf_telegram_bot_token: "{{ (install_conf_content.content | default(install_conf_for_tf.content | default(''))) | b64decode | regex_search('TELEGRAM_BOT_TOKEN=\"([^\"]+)\"', '\\1') | first | default('') }}"
+            tf_authorized_chat_id: "{{ (install_conf_content.content | default(install_conf_for_tf.content | default(''))) | b64decode | regex_search('AUTHORIZED_CHAT_ID=\"([^\"]+)\"', '\\1') | first | default('') }}"
+            tf_s3_bucket: "{{ (install_conf_content.content | default(install_conf_for_tf.content | default(''))) | b64decode | regex_search('S3_BUCKET_NAME=\"([^\"]+)\"', '\\1') | first | default('') }}"
+            tf_aws_region: "{{ (install_conf_content.content | default(install_conf_for_tf.content | default(''))) | b64decode | regex_search('AWS_REGION=\"([^\"]+)\"', '\\1') | first | default('eu-west-1') }}"
+          when: not tfvars_file.stat.exists and (install_conf_content is defined or install_conf_for_tf is defined)
+
+        - name: Generate terraform.tfvars from install.conf
+          copy:
+            content: |
+              # Auto-generated from install.conf - DO NOT EDIT MANUALLY
+              # Edit install.conf and re-run bootstrap to update
+
+              name_prefix        = "chatops"
+              aws_region         = "{{ tf_aws_region }}"
+              github_owner       = "{{ tf_github_owner }}"
+              github_repo        = "{{ tf_github_repo }}"
+              github_branch      = "main"
+              authorized_chat_id = "{{ tf_authorized_chat_id }}"
+
+              # Secrets
+              github_token       = "{{ tf_github_token }}"
+              telegram_bot_token = "{{ tf_telegram_bot_token }}"
+
+              # AWS Resources
+              s3_bucket_arn            = "arn:aws:s3:::{{ tf_s3_bucket }}"
+              terraform_backend_bucket = "{{ tf_s3_bucket }}"
+
+              # Lambda Configuration
+              webhook_lambda_zip_path      = "../terraform-zips/webhook-handler.zip"
+              telegram_lambda_zip_path     = "../terraform-zips/telegram-bot.zip"
+              ai_processor_lambda_zip_path = "../terraform-zips/ai-output-processor.zip"
+
+              # AI Processing
+              enable_ai_processing = false
+              ai_model_id          = "amazon.titan-text-lite-v1"
+              ai_threshold         = 1000
+              ai_max_tokens        = 1000
+
+              # Other Configuration
+              max_message_length = 3500
+              log_retention_days = 7
+
+              # Tags
+              tags = {
+                Project     = "ChatOps"
+                Environment = "dev"
+                ManagedBy   = "Terraform"
+              }
+            dest: "{{ terraform_dir }}/terraform.tfvars"
+            mode: '0600'
+          when: not tfvars_file.stat.exists
+          no_log: true
+
+        - name: Display terraform.tfvars created message
+          debug:
+            msg: "✅ Created terraform.tfvars from install.conf"
+          when: not tfvars_file.stat.exists
+
+        - name: Fail if terraform.tfvars still missing
+          fail:
+            msg: "terraform.tfvars not found and install.conf doesn't contain required values. Please create terraform.tfvars manually or ensure install.conf has all required values."
+          when: not tfvars_file.stat.exists and (tf_github_owner == '' or tf_github_repo == '' or tf_s3_bucket == '')
 
     - name: Check if Terraform is initialized
       stat:

@@ -207,6 +207,9 @@ See the [examples](./examples/) directory for complete usage examples:
 For detailed documentation, see the [`docs/`](./docs/) directory:
 
 - **[Project Management](./docs/PROJECT_MANAGEMENT.md)** - Managing multiple Terraform projects, provider requirements, and project registry
+- **[Teardown Guide](./docs/TEARDOWN.md)** - How to safely destroy infrastructure and manage teardowns
+- **[ChatOps Teardown](./docs/TEARDOWN_CHATOPS.md)** - Complete guide to tearing down the ChatOps system itself
+- **[Teardown Methods](./docs/TEARDOWN_METHODS.md)** - Comparison of all teardown methods and what each destroys
 - **[Workflow Strategy](./docs/WORKFLOW_STRATEGY.md)** - CI/CD workflow architecture and flow
 - **[Deployment Guide](./docs/DEPLOYMENT.md)** - Manual deployment procedures
 - **[CI/CD Guide](./docs/CI_CD.md)** - Continuous integration and deployment
