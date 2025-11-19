@@ -1,12 +1,16 @@
-# ChatOps Terraform Module v1.0
+# ChatOps Terraform Module v0.1.0
 
-A production-ready Terraform module for building ChatOps workflows on AWS. This module enables you to manage infrastructure through Telegram with secure GitHub Actions integration.
+**⚠️ Early Development Version - Not Production Ready ⚠️**
+
+A Terraform module for building ChatOps workflows on AWS. This module enables you to manage infrastructure through Telegram with secure GitHub Actions integration.
+
+**Status**: This is an early development version (v0.1.0). The module is functional but may have breaking changes, incomplete features, or undocumented behavior. Use at your own risk and test thoroughly before deploying to production environments.
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         ChatOps v1.0                            │
+│                         ChatOps v0.1.0                          │
 │                                                                 │
 │  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐         │
 │  │    Core      │   │    CI/CD     │   │     Chat     │         │
@@ -29,8 +33,10 @@ A production-ready Terraform module for building ChatOps workflows on AWS. This 
 - **Secure CI/CD Integration**: GitHub OIDC authentication with least-privilege IAM
 - **Centralized Secret Management**: AWS Secrets Manager for all credentials
 - **Separate AI Processing**: Optional AWS Bedrock integration for output summarization
-- **Production Ready**: CloudWatch logging, X-Ray tracing, API throttling
+- **Observability**: CloudWatch logging, X-Ray tracing, API throttling
 - **Modular Architecture**: Core module + optional AI processor
+
+**⚠️ Note**: This is v0.1.0 - not production ready. Features may be incomplete, APIs may change, and thorough testing is required before production use.
 
 ## Quick Start
 
@@ -38,7 +44,8 @@ A production-ready Terraform module for building ChatOps workflows on AWS. This 
 
 ```hcl
 module "chatops" {
-  source = "github.com/your-org/terraform-aws-chatops"
+  source  = "BarryPekerman/chatops/aws"
+  version = "0.1.0"
 
   name_prefix        = "my-chatops"
   github_owner       = "my-org"
@@ -48,17 +55,18 @@ module "chatops" {
   authorized_chat_id = var.authorized_chat_id
   s3_bucket_arn      = "arn:aws:s3:::my-terraform-state"
 
-  webhook_lambda_zip_path  = "lambda_function.zip"
-  telegram_lambda_zip_path = "telegram-bot.zip"
+  webhook_lambda_zip_path      = "lambda_function.zip"
+  telegram_lambda_zip_path     = "telegram-bot.zip"
+  ai_processor_lambda_zip_path = "ai-output-processor.zip"  # Required even if AI is disabled
 }
 ```
 
 ### With AI Processing
 
 ```hcl
-# Base ChatOps module (no AI)
 module "chatops" {
-  source = "github.com/your-org/terraform-aws-chatops"
+  source  = "BarryPekerman/chatops/aws"
+  version = "0.1.0"
 
   name_prefix        = "my-chatops"
   github_owner       = "my-org"
@@ -68,19 +76,15 @@ module "chatops" {
   authorized_chat_id = var.authorized_chat_id
   s3_bucket_arn      = "arn:aws:s3:::my-terraform-state"
 
-  webhook_lambda_zip_path  = "webhook-handler.zip"
-  telegram_lambda_zip_path = "telegram-bot.zip"
-}
+  webhook_lambda_zip_path      = "webhook-handler.zip"
+  telegram_lambda_zip_path     = "telegram-bot.zip"
+  ai_processor_lambda_zip_path = "ai-output-processor.zip"
 
-# Separate AI Output Processor module
-module "ai_processor" {
-  source = "github.com/your-org/terraform-aws-chatops//modules-optional/ai-output-processor"
-
-  function_name        = "my-chatops-ai-processor"
-  api_gateway_name     = "my-chatops-ai-api"
-  lambda_zip_path      = "ai-output-processor.zip"
+  # Enable AI processing via AWS Bedrock
   enable_ai_processing = true
   ai_model_id          = "anthropic.claude-3-haiku-20240307-v1:0"
+  ai_threshold         = 1000
+  ai_max_tokens        = 1000
 }
 ```
 
@@ -150,12 +154,12 @@ target-module/
 | api_gateway_stage        | API Gateway stage name                     | `string` | `"prod"` |
 | log_retention_days       | CloudWatch log retention in days           | `number` | `7`      |
 | enable_xray_tracing      | Enable X-Ray tracing for API Gateway       | `bool`   | `true`   |
-| rate_limit               | API Gateway rate limit (requests/second)   | `number` | `100`    |
-| burst_limit              | API Gateway burst limit                    | `number` | `200`    |
-| quota_limit              | API Gateway quota limit                    | `number` | `10000`  |
-| quota_period             | API Gateway quota period                   | `string` | `"DAY"`  |
+| rate_limit                | API Gateway rate limit (requests/second)   | `number` | `100`    |
+| burst_limit               | API Gateway burst limit                    | `number` | `200`    |
+| quota_limit               | API Gateway quota limit                    | `number` | `10000`  |
+| quota_period              | API Gateway quota period                   | `string` | `"DAY"`  |
 | webhook_api_key_required | Whether webhook API requires API key       | `bool`   | `false`  |
-| tags                     | Tags to apply to all resources             | `map(string)` | `{"ManagedBy": "terraform", "Project": "chatops"}` |
+| tags                      | Tags to apply to all resources             | `map(string)` | `{"ManagedBy": "terraform", "Project": "chatops"}` |
 
 ## Outputs
 
@@ -174,7 +178,7 @@ target-module/
 
 ## Platform Support
 
-### Telegram (v1.0)
+### Telegram (v0.1.0)
 
 - ✅ Bot integration
 - ✅ Webhook handler
@@ -202,7 +206,11 @@ See the [examples](./examples/) directory for complete usage examples:
 
 For detailed documentation, see the [`docs/`](./docs/) directory:
 
+- **[Lessons Learned](./docs/LESSONS_LEARNED.md)** - Key insights, challenges, and solutions from building this project (great for learning!)
 - **[Project Management](./docs/PROJECT_MANAGEMENT.md)** - Managing multiple Terraform projects, provider requirements, and project registry
+- **[Teardown Guide](./docs/TEARDOWN.md)** - How to safely destroy infrastructure and manage teardowns
+- **[ChatOps Teardown](./docs/TEARDOWN_CHATOPS.md)** - Complete guide to tearing down the ChatOps system itself
+- **[Teardown Methods](./docs/TEARDOWN_METHODS.md)** - Comparison of all teardown methods and what each destroys
 - **[Workflow Strategy](./docs/WORKFLOW_STRATEGY.md)** - CI/CD workflow architecture and flow
 - **[Deployment Guide](./docs/DEPLOYMENT.md)** - Manual deployment procedures
 - **[CI/CD Guide](./docs/CI_CD.md)** - Continuous integration and deployment
