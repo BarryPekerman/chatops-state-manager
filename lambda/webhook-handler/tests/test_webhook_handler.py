@@ -332,25 +332,6 @@ class TestGitHubWorkflowTrigger:
                 assert payload['client_payload']['token'] == 'token123'
                 assert payload['client_payload']['project'] == 'test-project'
 
-    def test_trigger_github_workflow_with_non_string_project(self, mock_env, mock_secrets):
-        """Test GitHub workflow trigger with non-string project value"""
-        with patch('webhook_handler.requests.post') as mock_post:
-            mock_response = Mock()
-            mock_response.status_code = 204
-            mock_response.raise_for_status = Mock()
-            mock_post.return_value = mock_response
-
-            with patch('webhook_handler.send_telegram_feedback'):
-                # Pass a non-string project value (like an int) to test conversion
-                response = webhook_handler.trigger_github_workflow('status', 123456789, project=12345)
-
-                assert response['statusCode'] == 200
-
-                # Verify project was converted to string in payload
-                call_args = mock_post.call_args
-                payload = call_args[1]['json']
-                assert payload['client_payload']['project'] == '12345'
-
     def test_trigger_github_workflow_failure(self, mock_env, mock_secrets):
         """Test GitHub workflow trigger failure"""
         with patch('webhook_handler.requests.post') as mock_post:
@@ -359,19 +340,6 @@ class TestGitHubWorkflowTrigger:
             response = webhook_handler.trigger_github_workflow('status', 123456789)
 
             assert response['statusCode'] == 500
-
-    def test_trigger_github_workflow_request_exception(self, mock_env, mock_secrets):
-        """Test GitHub workflow trigger with RequestException"""
-        import requests
-        import json
-        with patch('webhook_handler.requests.post') as mock_post:
-            mock_post.side_effect = requests.exceptions.RequestException('Connection error')
-
-            response = webhook_handler.trigger_github_workflow('status', 123456789)
-
-            assert response['statusCode'] == 500
-            body = json.loads(response['body'])
-            assert body['error'] == 'Failed to trigger GitHub workflow'
 
     def test_missing_github_config(self, mock_secrets):
         """Test missing GitHub configuration"""

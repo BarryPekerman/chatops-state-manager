@@ -20,7 +20,7 @@ cp -r src/* "$TEMP_DIR/"
 # Install dependencies
 echo "📦 Installing Python dependencies..."
 cd "$TEMP_DIR"
-pip install -r requirements.txt -t .
+pip install --default-timeout=600 --ignore-installed -r requirements.txt -t .
 
 # Create ZIP package
 echo "📦 Creating ZIP package..."

@@ -3,9 +3,7 @@ name: pre-commit
 on:
   pull_request:
   push:
-    branches:
-      - main
-      - dev
+    branches: [ main ]
 
 jobs:
   pre-commit:
@@ -22,45 +20,26 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.13.3
-          terraform_wrapper: true
+          terraform_version: 1.6.0
 
       - name: Install TFLint
         run: |
           curl -s https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
           # TFLint is already installed to /usr/local/bin/ by the script
 
-      - name: Install pre-commit and detect-secrets
-        run: pip install pre-commit detect-secrets
-      - name: Run pre-commit hooks (check only, no modifications)
+      - name: Install pre-commit
         run: |
-          # Run pre-commit in check mode - it will fail if files need fixing
-          # This prevents the workflow from modifying files in CI
-          pre-commit run --all-files --show-diff-on-failure || {
-            echo "::error::Pre-commit hooks found issues that need to be fixed locally."
-            echo "::error::Run 'pre-commit run --all-files' locally to auto-fix these issues."
-            exit 1
-          }
-      - name: Run TFLint on terraform/
-        if: hashFiles('terraform/**/*.tf') != ''
+          pip install pre-commit detect-secrets
+
+      - name: Run TFLint
         run: |
-          if [ -d "terraform" ]; then
-            cd terraform
-            tflint --init
-            tflint --format=default
-          else
-            echo "Skipping tflint on terraform/ as directory does not exist."
-          fi
-      - name: Run TFLint on terraform-config/
-        if: hashFiles('terraform-config/**/*.tf') != ''
+          cd terraform
+          tflint --init
+          tflint --format=default
+
+      - name: Run pre-commit
         run: |
-          if [ -d "terraform-config" ]; then
-            cd terraform-config
-            tflint --init
-            tflint --format=default
-          else
-            echo "Skipping tflint on terraform-config/ as directory does not exist."
-          fi
+          pre-commit run --all-files
 
   gitleaks:
     runs-on: ubuntu-latest
