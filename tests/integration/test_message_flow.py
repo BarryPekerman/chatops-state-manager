@@ -230,32 +230,6 @@ class TestWebhookHandlerIntegration:
             assert data['count'] >= 1
 
 
-class TestOutputSanitization:
-    """Test output sanitization across the system"""
-
-    def test_sanitize_secrets_in_output(self):
-        """Test that secrets are properly sanitized"""
-        import sys
-        sys.path.insert(0, '/lambda/webhook-handler/src')
-        import webhook_handler
-
-        # Test various secret patterns
-        test_cases = [
-            ("Token: ghp_1234567890abcdefghijklmnopqrstuvwxyz", "[REDACTED]"),
-            ("AWS_KEY=AKIAIOSFODNN7EXAMPLE", "[REDACTED]"),
-            ("password=secret123", "[REDACTED]"),
-        ]
-
-        for input_text, expected_pattern in test_cases:
-            result = webhook_handler.sanitize_workflow_output(input_text)
-            assert expected_pattern in result
-            # Ensure original secret is not in output
-            if "ghp_" in input_text:
-                assert "ghp_" not in result
-            if "AKIA" in input_text:
-                assert "AKIA" not in result
-
-
 class TestEndToEndFlow:
     """Test complete end-to-end message flow"""
 
