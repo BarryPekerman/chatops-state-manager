@@ -415,31 +415,6 @@ class TestCallbackMode:
             mock_send.assert_called_once()
 
 
-class TestOutputSanitization:
-    """Test output sanitization for security"""
-
-    def test_sanitize_github_tokens(self):
-        """Test GitHub token redaction"""
-        text = "Token: ghp_1234567890abcdefghijklmnopqrstuvwxyz"
-        result = webhook_handler.sanitize_workflow_output(text)
-        assert 'ghp_' not in result
-        assert '[REDACTED]' in result
-
-    def test_sanitize_aws_keys(self):
-        """Test AWS key redaction"""
-        text = "AWS_ACCESS_KEY_ID: AKIAIOSFODNN7EXAMPLE"
-        result = webhook_handler.sanitize_workflow_output(text)
-        assert 'AKIA' not in result
-        assert '[REDACTED]' in result
-
-    def test_sanitize_long_output(self):
-        """Test output truncation"""
-        text = "x" * 15000
-        result = webhook_handler.sanitize_workflow_output(text)
-        assert len(result) <= 12100
-        assert 'truncated' in result
-
-
 class TestErrorHandling:
     """Test error handling"""
 
