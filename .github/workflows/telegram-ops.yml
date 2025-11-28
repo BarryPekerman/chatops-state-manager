@@ -193,15 +193,20 @@ jobs:
             --arg raw_output "$PROJECT_LIST" \
             '{callback: true, chat_id: $chat_id, command: $command, raw_output: $raw_output}')
 
-          # Build curl command with optional API key
+          # Send callback with optional API key (properly quote to handle special characters)
           CALLBACK_URL="${{ steps.callback.outputs.callback-url }}"
           CALLBACK_KEY="${{ steps.callback.outputs.callback-key }}"
-          CURL_CMD="curl -sS -X POST \"$CALLBACK_URL\""
+
           if [[ -n "$CALLBACK_KEY" ]]; then
-            CURL_CMD="$CURL_CMD -H \"x-api-key: $CALLBACK_KEY\""
+            curl -sS -X POST "$CALLBACK_URL" \
+              -H "x-api-key: $CALLBACK_KEY" \
+              -H "Content-Type: application/json" \
+              -d "$PAYLOAD" || true
+          else
+            curl -sS -X POST "$CALLBACK_URL" \
+              -H "Content-Type: application/json" \
+              -d "$PAYLOAD" || true
           fi
-          CURL_CMD="$CURL_CMD -H \"Content-Type: application/json\" -d \"$PAYLOAD\""
-          eval "$CURL_CMD" || true
 
       - name: Select project
         id: project
@@ -345,15 +350,20 @@ jobs:
             --arg raw_output "$STATUS_OUTPUT" \
             '{callback:true, chat_id:$chat_id, command:$command, project:$project, raw_output:$raw_output}')
 
-          # Build curl command with optional API key
+          # Send callback with optional API key (properly quote to handle special characters)
           CALLBACK_URL="${{ steps.callback.outputs.callback-url }}"
           CALLBACK_KEY="${{ steps.callback.outputs.callback-key }}"
-          CURL_CMD="curl -sS -X POST \"$CALLBACK_URL\""
+
           if [[ -n "$CALLBACK_KEY" ]]; then
-            CURL_CMD="$CURL_CMD -H \"x-api-key: $CALLBACK_KEY\""
+            curl -sS -X POST "$CALLBACK_URL" \
+              -H "x-api-key: $CALLBACK_KEY" \
+              -H "Content-Type: application/json" \
+              -d "$JSON_PAYLOAD" || true
+          else
+            curl -sS -X POST "$CALLBACK_URL" \
+              -H "Content-Type: application/json" \
+              -d "$JSON_PAYLOAD" || true
           fi
-          CURL_CMD="$CURL_CMD -H \"Content-Type: application/json\" -d \"$JSON_PAYLOAD\""
-          eval "$CURL_CMD" || true
 
       - name: Run destroy command
         if: ${{ steps.derive.outputs.command == 'destroy' }}
@@ -393,15 +403,20 @@ jobs:
             --arg raw_output "$DESTROY_OUTPUT" \
             '{callback:true, chat_id:$chat_id, command:$command, project:$project, run_id:$run_id, raw_output:$raw_output}')
 
-          # Build curl command with optional API key
+          # Send callback with optional API key (properly quote to handle special characters)
           CALLBACK_URL="${{ steps.callback.outputs.callback-url }}"
           CALLBACK_KEY="${{ steps.callback.outputs.callback-key }}"
-          CURL_CMD="curl -sS -X POST \"$CALLBACK_URL\""
+
           if [[ -n "$CALLBACK_KEY" ]]; then
-            CURL_CMD="$CURL_CMD -H \"x-api-key: $CALLBACK_KEY\""
+            curl -sS -X POST "$CALLBACK_URL" \
+              -H "x-api-key: $CALLBACK_KEY" \
+              -H "Content-Type: application/json" \
+              -d "$JSON_PAYLOAD" || true
+          else
+            curl -sS -X POST "$CALLBACK_URL" \
+              -H "Content-Type: application/json" \
+              -d "$JSON_PAYLOAD" || true
           fi
-          CURL_CMD="$CURL_CMD -H \"Content-Type: application/json\" -d \"$JSON_PAYLOAD\""
-          eval "$CURL_CMD" || true
 
       - name: Run confirm_destroy command
         if: ${{ steps.derive.outputs.command == 'confirm_destroy' }}
@@ -456,12 +471,17 @@ jobs:
             --arg raw_output "$DESTROY_OUTPUT" \
             '{callback:true, chat_id:$chat_id, command:$command, project:$project, run_id:$run_id, raw_output:$raw_output}')
 
-          # Build curl command with optional API key
+          # Send callback with optional API key (properly quote to handle special characters)
           CALLBACK_URL="${{ steps.callback.outputs.callback-url }}"
           CALLBACK_KEY="${{ steps.callback.outputs.callback-key }}"
-          CURL_CMD="curl -sS -X POST \"$CALLBACK_URL\""
+
           if [[ -n "$CALLBACK_KEY" ]]; then
-            CURL_CMD="$CURL_CMD -H \"x-api-key: $CALLBACK_KEY\""
+            curl -sS -X POST "$CALLBACK_URL" \
+              -H "x-api-key: $CALLBACK_KEY" \
+              -H "Content-Type: application/json" \
+              -d "$JSON_PAYLOAD" || true
+          else
+            curl -sS -X POST "$CALLBACK_URL" \
+              -H "Content-Type: application/json" \
+              -d "$JSON_PAYLOAD" || true
           fi
-          CURL_CMD="$CURL_CMD -H \"Content-Type: application/json\" -d \"$JSON_PAYLOAD\""
-          eval "$CURL_CMD" || true
