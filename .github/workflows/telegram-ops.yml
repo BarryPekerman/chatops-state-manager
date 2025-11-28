@@ -113,16 +113,18 @@ jobs:
             CALLBACK_KEY="${{ secrets.CALLBACK_KEY }}"
           fi
 
+          # API key is optional - only warn if not found, don't fail
           if [[ -z "$CALLBACK_KEY" ]] || [[ "$CALLBACK_KEY" == "null" ]]; then
-            echo "Error: CALLBACK_KEY not found in Secrets Manager or GitHub secrets!" >&2
-            echo "The API Gateway requires an API key for authentication." >&2
-            exit 1
+            echo "Info: CALLBACK_KEY not found in Secrets Manager or GitHub secrets." >&2
+            echo "API key is optional - requests will be made without API key authentication." >&2
+            CALLBACK_KEY=""  # Set to empty string so curl commands can check for it
+          else
+            echo "API key found: ${CALLBACK_KEY:0:5}..." # Show first 5 chars for debugging
           fi
 
           echo "callback-url=$CALLBACK_URL" >> $GITHUB_OUTPUT
           echo "callback-key=$CALLBACK_KEY" >> $GITHUB_OUTPUT
           echo "Using callback URL: ${CALLBACK_URL:0:50}..." # Show first 50 chars for debugging
-          echo "API key found: ${CALLBACK_KEY:0:5}..." # Show first 5 chars for debugging
 
       - name: Fetch project registry
         id: registry
@@ -190,10 +192,16 @@ jobs:
             --arg command "list_projects" \
             --arg raw_output "$PROJECT_LIST" \
             '{callback: true, chat_id: $chat_id, command: $command, raw_output: $raw_output}')
-          curl -sS -X POST "${{ steps.callback.outputs.callback-url }}" \
-            -H "x-api-key: ${{ steps.callback.outputs.callback-key }}" \
-            -H "Content-Type: application/json" \
-            -d "$PAYLOAD" || true
+
+          # Build curl command with optional API key
+          CALLBACK_URL="${{ steps.callback.outputs.callback-url }}"
+          CALLBACK_KEY="${{ steps.callback.outputs.callback-key }}"
+          CURL_CMD="curl -sS -X POST \"$CALLBACK_URL\""
+          if [[ -n "$CALLBACK_KEY" ]]; then
+            CURL_CMD="$CURL_CMD -H \"x-api-key: $CALLBACK_KEY\""
+          fi
+          CURL_CMD="$CURL_CMD -H \"Content-Type: application/json\" -d \"$PAYLOAD\""
+          eval "$CURL_CMD" || true
 
       - name: Select project
         id: project
@@ -336,10 +344,16 @@ jobs:
             --arg project "${{ steps.project.outputs.project-selected }}" \
             --arg raw_output "$STATUS_OUTPUT" \
             '{callback:true, chat_id:$chat_id, command:$command, project:$project, raw_output:$raw_output}')
-          curl -sS -X POST "${{ steps.callback.outputs.callback-url }}" \
-            -H "x-api-key: ${{ steps.callback.outputs.callback-key }}" \
-            -H "Content-Type: application/json" \
-            -d "$JSON_PAYLOAD" || true
+
+          # Build curl command with optional API key
+          CALLBACK_URL="${{ steps.callback.outputs.callback-url }}"
+          CALLBACK_KEY="${{ steps.callback.outputs.callback-key }}"
+          CURL_CMD="curl -sS -X POST \"$CALLBACK_URL\""
+          if [[ -n "$CALLBACK_KEY" ]]; then
+            CURL_CMD="$CURL_CMD -H \"x-api-key: $CALLBACK_KEY\""
+          fi
+          CURL_CMD="$CURL_CMD -H \"Content-Type: application/json\" -d \"$JSON_PAYLOAD\""
+          eval "$CURL_CMD" || true
 
       - name: Run destroy command
         if: ${{ steps.derive.outputs.command == 'destroy' }}
@@ -378,10 +392,16 @@ jobs:
             --arg run_id "${{ github.run_id }}" \
             --arg raw_output "$DESTROY_OUTPUT" \
             '{callback:true, chat_id:$chat_id, command:$command, project:$project, run_id:$run_id, raw_output:$raw_output}')
-          curl -sS -X POST "${{ steps.callback.outputs.callback-url }}" \
-            -H "x-api-key: ${{ steps.callback.outputs.callback-key }}" \
-            -H "Content-Type: application/json" \
-            -d "$JSON_PAYLOAD" || true
+
+          # Build curl command with optional API key
+          CALLBACK_URL="${{ steps.callback.outputs.callback-url }}"
+          CALLBACK_KEY="${{ steps.callback.outputs.callback-key }}"
+          CURL_CMD="curl -sS -X POST \"$CALLBACK_URL\""
+          if [[ -n "$CALLBACK_KEY" ]]; then
+            CURL_CMD="$CURL_CMD -H \"x-api-key: $CALLBACK_KEY\""
+          fi
+          CURL_CMD="$CURL_CMD -H \"Content-Type: application/json\" -d \"$JSON_PAYLOAD\""
+          eval "$CURL_CMD" || true
 
       - name: Run confirm_destroy command
         if: ${{ steps.derive.outputs.command == 'confirm_destroy' }}
@@ -435,7 +455,13 @@ jobs:
             --arg run_id "${{ steps.derive.outputs.token || github.run_id }}" \
             --arg raw_output "$DESTROY_OUTPUT" \
             '{callback:true, chat_id:$chat_id, command:$command, project:$project, run_id:$run_id, raw_output:$raw_output}')
-          curl -sS -X POST "${{ steps.callback.outputs.callback-url }}" \
-            -H "x-api-key: ${{ steps.callback.outputs.callback-key }}" \
-            -H "Content-Type: application/json" \
-            -d "$JSON_PAYLOAD" || true
+
+          # Build curl command with optional API key
+          CALLBACK_URL="${{ steps.callback.outputs.callback-url }}"
+          CALLBACK_KEY="${{ steps.callback.outputs.callback-key }}"
+          CURL_CMD="curl -sS -X POST \"$CALLBACK_URL\""
+          if [[ -n "$CALLBACK_KEY" ]]; then
+            CURL_CMD="$CURL_CMD -H \"x-api-key: $CALLBACK_KEY\""
+          fi
+          CURL_CMD="$CURL_CMD -H \"Content-Type: application/json\" -d \"$JSON_PAYLOAD\""
+          eval "$CURL_CMD" || true
