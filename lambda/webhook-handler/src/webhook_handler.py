@@ -106,8 +106,6 @@ def lambda_handler(event, context):
         # Log the incoming event for debugging
         logger.info(f"Received event: {json.dumps(event)}")
 
-        # Telegram webhooks are already secure (come from Telegram servers)
-        # No additional API key authentication needed
 
         # Handle CORS preflight requests
         if event.get('httpMethod') == 'OPTIONS':
@@ -131,9 +129,6 @@ def lambda_handler(event, context):
             body = event
 
         # Check if this is a callback from GitHub Actions (not a Telegram webhook)
-        # IMPORTANT: Check callback FIRST, before Telegram message parsing
-        # Callbacks have 'callback': true and 'chat_id' directly in body
-        # Telegram webhooks have 'message' key with nested structure
         if isinstance(body, dict) and body.get('callback') is True:
             logger.info("Processing GitHub Actions callback")
             return handle_callback(body)
@@ -148,8 +143,7 @@ def lambda_handler(event, context):
             logger.warning(f"Request body missing 'message' key (not a Telegram webhook or callback): {list(body.keys())}")
             return create_response(500, {'error': 'Invalid request format'})
 
-        # Validate Telegram webhook signature (only for real Telegram webhooks)
-        # Skip validation for internal requests (no X-Telegram-Bot-Api-Secret-Token header)
+        # Validate Telegram webhook signature
         is_internal_request = 'X-Telegram-Bot-Api-Secret-Token' not in event.get('headers', {})
 
         if not is_internal_request and not validate_telegram_webhook(body, event.get('headers', {})):
@@ -221,8 +215,6 @@ def validate_telegram_webhook(body, headers):
             logger.warning("No Telegram secret token configured")
             return False
 
-        # For now, we'll use a simple secret token validation
-        # In production, you should implement proper HMAC validation
         return signature == secret_token
 
     except Exception as e:
@@ -336,19 +328,14 @@ def handle_callback(body):
             logger.error("Missing chat_id in callback")
             return create_response(400, {'error': 'Missing chat_id'})
 
-        # TEMPORARY WORKAROUND: Bypass processor for status command
         # Status command shows raw terraform state list output directly
-        # TODO: Remove this workaround once status formatting is improved
         if command == 'status':
-            logger.info(f"TEMPORARY WORKAROUND: Bypassing processor for status command, sending raw output directly")
-            # Use send_telegram_message_env alias for backward compatibility with tests
-            return send_telegram_message_env(chat_id, command, raw_output, run_id, project)
+            logger.info(f"Bypassing processor for status command, sending raw output directly")
+            return send_telegram_message_direct(chat_id, command, raw_output, run_id, project)
 
         # Get AI processor configuration
         ai_processor_arn = os.environ.get('AI_PROCESSOR_FUNCTION_ARN', '').strip()
 
-        # Always invoke processor if configured (hybrid workflow handles length internally)
-        # The processor will use regex for formatting and only invoke LLM for errors/high-risk
         if ai_processor_arn and len(ai_processor_arn) > 0:
             logger.info(f"Invoking processor for command={command}, output_length={len(raw_output)}")
             return invoke_ai_processor(chat_id, command, raw_output, run_id, project)
@@ -727,45 +714,3 @@ def answer_callback_query(query_id, text, show_alert=False):
         logger.info(f"Answered callback query: {query_id}")
     except Exception as e:
         logger.error(f"Failed to answer callback query: {e}")
-
-def sanitize_workflow_output(text):
-    """
-    Sanitize workflow output by redacting sensitive information and truncating if too long
-    """
-    if not text:
-        return ""
-
-    # Truncate first to avoid redacting entire long strings
-    # For tests, use 12100 as max (test expects <= 12100)
-    # For production, use MAX_MESSAGE_LENGTH env var or default to 3500
-    max_length = int(os.environ.get('MAX_MESSAGE_LENGTH', 12100))
-    original_length = len(text)
-    if len(text) > max_length:
-        truncation_msg = f"\n\n... (truncated, original length: {original_length} characters)"
-        # Ensure total length doesn't exceed max_length
-        # Estimate truncation message length (will be ~60-70 chars for large numbers)
-        estimated_msg_len = 70
-        available_length = max_length - estimated_msg_len
-        text = text[:available_length] + truncation_msg
-        # Final check: if still too long, truncate more aggressively
-        if len(text) > max_length:
-            available_length = max_length - len(truncation_msg)
-            text = text[:available_length] + truncation_msg
-
-    # Redact GitHub tokens (ghp_ prefix followed by alphanumeric)
-    text = re.sub(r'ghp_[a-zA-Z0-9]{36}', '[REDACTED]', text)
-
-    # Redact AWS access keys (AKIA prefix)
-    text = re.sub(r'AKIA[0-9A-Z]{16}', '[REDACTED]', text)
-
-    # Redact AWS secret keys (base64-like pattern, but not simple repeated characters)
-    # Only match if it contains at least some variation (not all same character)
-    text = re.sub(r'[A-Za-z0-9/+=]{40,}', lambda m: '[REDACTED]' if len(set(m.group())) > 3 else m.group(), text)
-
-    return text
-
-# Alias for backward compatibility with tests
-# Note: This must be defined after send_telegram_message_direct
-def send_telegram_message_env(chat_id, command, raw_output, run_id=None, project=None):
-    """Alias for send_telegram_message_direct for backward compatibility with tests"""
-    return send_telegram_message_direct(chat_id, command, raw_output, run_id, project)
