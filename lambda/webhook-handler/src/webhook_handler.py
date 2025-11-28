@@ -103,10 +103,9 @@ def lambda_handler(event, context):
     Lambda function to handle Telegram webhooks and trigger GitHub Actions
     """
     try:
+        # Log the incoming event for debugging
         logger.info(f"Received event: {json.dumps(event)}")
 
-        # Telegram webhooks are already secure (come from Telegram servers)
-        # No additional API key authentication needed
 
         # Handle CORS preflight requests
         if event.get('httpMethod') == 'OPTIONS':
@@ -130,9 +129,6 @@ def lambda_handler(event, context):
             body = event
 
         # Check if this is a callback from GitHub Actions (not a Telegram webhook)
-        # IMPORTANT: Check callback FIRST, before Telegram message parsing
-        # Callbacks have 'callback': true and 'chat_id' directly in body
-        # Telegram webhooks have 'message' key with nested structure
         if isinstance(body, dict) and body.get('callback') is True:
             logger.info("Processing GitHub Actions callback")
             return handle_callback(body)
@@ -147,8 +143,7 @@ def lambda_handler(event, context):
             logger.warning(f"Request body missing 'message' key (not a Telegram webhook or callback): {list(body.keys())}")
             return create_response(500, {'error': 'Invalid request format'})
 
-        # Validate Telegram webhook signature (only for real Telegram webhooks)
-        # Skip validation for internal requests (no X-Telegram-Bot-Api-Secret-Token header)
+        # Validate Telegram webhook signature
         is_internal_request = 'X-Telegram-Bot-Api-Secret-Token' not in event.get('headers', {})
 
         if not is_internal_request and not validate_telegram_webhook(body, event.get('headers', {})):
@@ -179,7 +174,7 @@ def lambda_handler(event, context):
         command = parts[0].lower()
         project = parts[1] if len(parts) > 1 else None
 
-        # Handle commands - Project selection and workflow-triggering commands
+        # Handle commands - Only 3 commands: /select, /list, /help
         if command == '/select':
             registry = get_project_registry()
             if not registry:
@@ -196,11 +191,6 @@ def lambda_handler(event, context):
             return list_projects(chat_id)
         elif command == '/help' or command == '/start':
             return show_help(chat_id)
-        elif command in ['/status', '/destroy', '/confirm_destroy']:
-            # Commands that trigger GitHub workflows
-            # Extract command name without the leading slash
-            workflow_command = command[1:]  # Remove leading '/'
-            return trigger_github_workflow(workflow_command, chat_id, project=project)
         else:
             return create_response(200, {'message': f'Unknown command: {command}. Use /help to see available commands.'})
 
@@ -225,7 +215,6 @@ def validate_telegram_webhook(body, headers):
             logger.warning("No Telegram secret token configured")
             return False
 
-        # Simple secret token validation (HMAC validation can be added for enhanced security)
         return signature == secret_token
 
     except Exception as e:
@@ -250,19 +239,15 @@ def trigger_github_workflow(command, chat_id, project=None, token=None):
         if not all([github_token, github_owner, github_repo]):
             raise ValueError("Missing GitHub configuration")
 
-        # Convert project to string if provided
-        project_str = str(project) if project else None
-
         payload = {
             'event_type': 'telegram_command',
             'client_payload': {'command': command}
         }
 
-        # Add project and token if provided
-        if project_str:
-            payload['client_payload']['project'] = project_str
+        if project:
+            payload['client_payload']['project'] = project
         if token:
-            payload['client_payload']['token'] = str(token)
+            payload['client_payload']['token'] = token
 
         url = f"https://api.github.com/repos/{github_owner}/{github_repo}/dispatches"
         headers = {
@@ -274,20 +259,20 @@ def trigger_github_workflow(command, chat_id, project=None, token=None):
         response = requests.post(url, headers=headers, json=payload)
         response.raise_for_status()
 
-        logger.info(f"Successfully triggered GitHub workflow for command: {command}, project: {project_str}")
-        send_telegram_feedback(chat_id, command, project_str)
+        logger.info(f"Successfully triggered GitHub workflow for command: {command}, project: {project}")
+        send_telegram_feedback(chat_id, command, project)
 
         return create_response(200, {
             'message': f'Command {command} triggered successfully',
             'command': command,
-            'project': project_str
+            'project': project
         })
 
     except requests.exceptions.RequestException as e:
-        logger.error(f"GitHub API error: {e}")
+        logger.error(f"GitHub API error: {str(e)}")
         return create_response(500, {'error': 'Failed to trigger GitHub workflow'})
     except Exception as e:
-        logger.error(f"Error triggering workflow: {e}")
+        logger.error(f"Error triggering workflow: {str(e)}")
         return create_response(500, {'error': 'Internal error'})
 
 def send_telegram_feedback(chat_id, command, project=None):
@@ -304,10 +289,7 @@ def send_telegram_feedback(chat_id, command, project=None):
         if command == 'status':
             message = f"🔍 **Status Check Initiated**{project_text}\n\nChecking Terraform state...\n\n⏳ This may take a few moments."
         elif command == 'destroy':
-            if project:
-                message = f"💥 **Destroy Plan Created**{project_text}\n\n⚠️ **Review the plan carefully!**\n\nTo confirm destruction, send:\n`/confirm_destroy {project}`"
-            else:
-                message = f"💥 **Destroy Plan Created**{project_text}\n\n⚠️ **Review the plan carefully!**\n\nTo confirm destruction, send:\n`/confirm_destroy`"
+            message = f"💥 **Destroy Plan Created**{project_text}\n\n⚠️ **Review the plan carefully!**\n\nTo confirm destruction, send:\n`/confirm_destroy {project}`" if project else f"💥 **Destroy Plan Created**{project_text}\n\n⚠️ **Review the plan carefully!**\n\nTo confirm destruction, send:\n`/confirm_destroy`"
         elif command == 'confirm_destroy':
             message = f"🚀 **Destroy Confirmed**{project_text}\n\n💥 **Executing destruction...**\n\n⏳ This may take several minutes."
         else:
@@ -346,16 +328,14 @@ def handle_callback(body):
             logger.error("Missing chat_id in callback")
             return create_response(400, {'error': 'Missing chat_id'})
 
-        # Bypass processor for status command - status shows raw terraform state list output directly
+        # Status command shows raw terraform state list output directly
         if command == 'status':
-            logger.info("Bypassing processor for status command, sending raw output directly")
-            return send_telegram_message_env(chat_id, command, raw_output, run_id, project)
+            logger.info(f"Bypassing processor for status command, sending raw output directly")
+            return send_telegram_message_direct(chat_id, command, raw_output, run_id, project)
 
         # Get AI processor configuration
         ai_processor_arn = os.environ.get('AI_PROCESSOR_FUNCTION_ARN', '').strip()
 
-        # Always invoke processor if configured (hybrid workflow handles length internally)
-        # The processor will use regex for formatting and only invoke LLM for errors/high-risk
         if ai_processor_arn and len(ai_processor_arn) > 0:
             logger.info(f"Invoking processor for command={command}, output_length={len(raw_output)}")
             return invoke_ai_processor(chat_id, command, raw_output, run_id, project)
@@ -734,47 +714,3 @@ def answer_callback_query(query_id, text, show_alert=False):
         logger.info(f"Answered callback query: {query_id}")
     except Exception as e:
         logger.error(f"Failed to answer callback query: {e}")
-
-def sanitize_workflow_output(text):
-    """
-    Sanitize workflow output by redacting sensitive information and truncating if too long
-    """
-    if not text:
-        return ""
-
-    # Truncate first to avoid redacting entire long strings
-    max_length = int(os.environ.get('MAX_MESSAGE_LENGTH', 3500))
-    original_length = len(text)
-    if len(text) > max_length:
-        truncation_msg = f"\n\n... (truncated, original length: {original_length} characters)"
-        # Ensure total length doesn't exceed max_length
-        # Estimate truncation message length (will be ~60-70 chars for large numbers)
-        estimated_msg_len = 70
-        available_length = max_length - estimated_msg_len
-        text = text[:available_length] + truncation_msg
-        # Final check: if still too long, truncate more aggressively
-        if len(text) > max_length:
-            available_length = max_length - len(truncation_msg)
-            text = text[:available_length] + truncation_msg
-
-    # Redact GitHub tokens (ghp_ prefix followed by alphanumeric, typically 36+ chars)
-    text = re.sub(r'ghp_[a-zA-Z0-9]{20,}', '[REDACTED]', text)
-
-    # Redact AWS access keys (AKIA prefix)
-    text = re.sub(r'AKIA[0-9A-Z]{16}', '[REDACTED]', text)
-
-    # Redact AWS secret keys (base64-like pattern, but not simple repeated characters)
-    # Only match if it contains at least some variation (not all same character)
-    text = re.sub(r'[A-Za-z0-9/+=]{40,}', lambda m: '[REDACTED]' if len(set(m.group())) > 3 else m.group(), text)
-
-    # Redact generic password patterns (password=value or password: value)
-    text = re.sub(r'(?i)password\s*[=:]\s*[^\s\n\r]+', '[REDACTED]', text)
-
-    # Redact generic secret/token patterns
-    text = re.sub(r'(?i)(secret|token)\s*[=:]\s*[^\s\n\r]+', '[REDACTED]', text)
-
-    return text
-
-def send_telegram_message_env(chat_id, command, raw_output, run_id=None, project=None):
-    """Alias for send_telegram_message_direct"""
-    return send_telegram_message_direct(chat_id, command, raw_output, run_id, project)

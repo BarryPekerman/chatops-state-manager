@@ -25,46 +25,15 @@
 !/.github/workflows/pre-commit.yml
 !/.github/workflows/telegram-ops.yml
 
-# Documentation
-!/docs/ASSUME_ROLE_POLICY.md
-!/docs/CI_CD.md
-!/docs/DEPLOYMENT_IN_TESTS.md
-!/docs/DEPLOYMENT.md
-!/docs/LAMBDA_DEPLOYMENT.md
-!/docs/MODULE_VERSIONING.md
-!/docs/PROJECT_MANAGEMENT.md
-!/docs/TERRAFORM_CLOUD_MODULE.md
-!/docs/TESTING.md
-!/docs/WORKFLOW_STRATEGY.md
-
-# Configuration examples
-!/config/install.conf.example
-
-# Ansible files
-!/ansible/bootstrap.yml
-!/ansible/playbook.yml
-!/ansible/scripts/encrypt_github_secret.py
-!/ansible/vars/bootstrap-secrets.example.yml
-!/ansible/vars/secrets.example.yml
-
 # Scripts
 !/scripts/add-project.sh
 !/scripts/bootstrap.sh
-!/scripts/debug-chatops.sh
 !/scripts/install.sh
-!/scripts/rebuild_and_deploy.sh
+!/scripts/nuke-everything.sh
 !/scripts/register-project-from-dir.sh
-!/scripts/run-github-workflow.sh
-!/scripts/run-tests.sh
-!/scripts/setup-chatops.sh
-!/scripts/setup-requirements.sh
-!/scripts/setup-terraform.sh
-!/scripts/teardown.sh
-!/scripts/test-telegram-ops.sh
 
 # Terraform directory and files
 !/terraform/
-# Terraform files
 !/terraform/main.tf
 !/terraform/variables.tf
 !/terraform/outputs.tf
@@ -76,8 +45,6 @@
 !/terraform/environments/dev/
 !/terraform/environments/dev/terraform.tfvars.example
 !/terraform/environments/production/
-!/terraform/environments/README.md
-!/terraform/environments/dev/terraform.tfvars.example
 !/terraform/environments/production/terraform.tfvars.example
 
 # Terraform config
@@ -120,8 +87,6 @@
 install.conf
 terraform/terraform.tfvars
 terraform/environments/*/terraform.tfvars
-ansible/vars/bootstrap-secrets.yml
-ansible/vars/secrets.yml
 
 # Ignore build artifacts
 *.zip

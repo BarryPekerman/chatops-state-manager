@@ -1,10 +1,96 @@
-# ChatOps Terraform Module v0.1.0
+# ChatOps State Manager
 
-**⚠️ Early Development Version - Not Production Ready ⚠️**
+Manage your Terraform infrastructure through Telegram with secure GitHub Actions integration.
 
-A Terraform module for building ChatOps workflows on AWS. This module enables you to manage infrastructure through Telegram with secure GitHub Actions integration.
+## Quick Setup (First-Time Users)
 
-**Status**: This is an early development version (v0.1.0). The module is functional but may have breaking changes, incomplete features, or undocumented behavior. Use at your own risk and test thoroughly before deploying to production environments.
+### Prerequisites
+
+- AWS CLI configured with credentials
+- Terraform >= 1.0 installed
+- GitHub account with a repository
+- Telegram account
+
+### Step 1: Clone and Build Lambda Functions
+
+```bash
+git clone https://github.com/BarryPekerman/chatops-state-manager.git
+cd chatops-state-manager
+
+# Build Lambda ZIP files
+python3 build_all_lambdas.py
+```
+
+### Step 2: Set Up Telegram Bot
+
+1. **Create a bot:**
+   - Open Telegram and message [@BotFather](https://t.me/botfather)
+   - Send `/newbot` and follow the instructions
+   - Copy the bot token (format: `1234567890:ABCdefGHIjklMNOpqrsTUVwxyz`)
+
+2. **Get your Chat ID:**
+   - Send a message to your new bot
+   - Run: `curl "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates"`
+   - Find your chat ID in the response: `"chat":{"id":123456789}`
+
+### Step 3: Configure Terraform
+
+```bash
+cd terraform
+cp terraform.tfvars.example terraform.tfvars
+```
+
+Edit `terraform.tfvars` with your values:
+- `github_owner` - Your GitHub username/organization
+- `github_repo` - Repository name
+- `github_token` - GitHub Personal Access Token (create at https://github.com/settings/tokens)
+- `telegram_bot_token` - Bot token from Step 2
+- `authorized_chat_id` - Your chat ID from Step 2
+- `s3_bucket_arn` - ARN of your Terraform state S3 bucket
+
+### Step 4: Deploy Infrastructure
+
+```bash
+terraform init
+terraform plan
+terraform apply
+```
+
+### Step 5: Set Up GitHub Secrets
+
+After deployment, set these GitHub secrets in your repository:
+
+```bash
+# Get values from Terraform outputs
+terraform output -json | jq -r '.github_role_arn.value'  # AWS_ROLE_TO_ASSUME
+terraform output -json | jq -r '.webhook_url.value'      # CALLBACK_URL
+terraform output -json | jq -r '.webhook_api_key.value'   # CALLBACK_KEY (if enabled)
+
+# Set secrets (requires GitHub CLI)
+gh secret set AWS_ROLE_TO_ASSUME --body "<role-arn>"
+gh secret set CALLBACK_URL --body "<webhook-url>"
+gh secret set CALLBACK_KEY --body "<api-key>"  # Optional
+```
+
+### Step 6: Register Your First Project
+
+```bash
+# Register a Terraform project
+./scripts/register-project-from-dir.sh /path/to/your/terraform/project
+
+# Or manually add to project registry
+./scripts/add-project.sh my-project s3-bucket-name state/key/path us-east-1
+```
+
+### Step 7: Test It
+
+1. Send `/help` to your Telegram bot
+2. Try `/select` to choose a project and action
+3. Use `/list` to see all registered projects
+
+**That's it!** Your ChatOps system is ready to use.
+
+---
 
 ## Architecture
 
@@ -36,184 +122,102 @@ A Terraform module for building ChatOps workflows on AWS. This module enables yo
 - **Observability**: CloudWatch logging, X-Ray tracing, API throttling
 - **Modular Architecture**: Core module + optional AI processor
 
-**⚠️ Note**: This is v0.1.0 - not production ready. Features may be incomplete, APIs may change, and thorough testing is required before production use.
+## Usage
 
-## Quick Start
+### Telegram Commands
 
-### Basic Example (No AI)
+- `/select` - Select a project and action (Status or Destroy Plan)
+- `/list` - List all registered projects with details
+- `/help` - Show help message
+
+### Workflow
+
+1. Use `/select` to choose a project and action
+2. Select a project from the list
+3. Choose an action:
+   - **Status**: Check Terraform state
+   - **Destroy Plan**: Show destroy plan (review carefully!)
+4. To confirm destruction, type: `/confirm_destroy <project-name>`
+
+## Project Management
+
+### Register a Project
+
+```bash
+# Auto-detect from Terraform directory
+./scripts/register-project-from-dir.sh /path/to/terraform/project
+
+# Manual registration
+./scripts/add-project.sh project-name bucket-name state/key/path region
+```
+
+### List Projects
+
+```bash
+# Via Telegram
+/list
+
+# Via AWS CLI
+aws secretsmanager get-secret-value \
+  --secret-id chatops/project-registry \
+  --query SecretString --output text | jq
+```
+
+## Configuration
+
+### Terraform Variables
+
+See `terraform/terraform.tfvars.example` for all available configuration options.
+
+### Environment Variables
+
+Lambda functions use environment variables configured via Terraform:
+- `AUTHORIZED_CHAT_ID` - Authorized Telegram chat ID
+- `GITHUB_OWNER` - GitHub repository owner
+- `GITHUB_REPO` - GitHub repository name
+- `PROJECT_REGISTRY_SECRET_ARN` - ARN of project registry secret
+
+## Troubleshooting
+
+### Bot Not Responding
+
+1. Check CloudWatch logs: `aws logs tail /aws/lambda/chatops-webhook-handler --follow`
+2. Verify Telegram webhook is set: Check API Gateway URL in Terraform outputs
+3. Verify chat ID matches: Check `AUTHORIZED_CHAT_ID` environment variable
+
+### GitHub Actions Not Triggering
+
+1. Verify GitHub secrets are set: `gh secret list`
+2. Check IAM role ARN matches: Compare `AWS_ROLE_TO_ASSUME` secret with Terraform output
+3. Verify repository dispatch event is configured in workflow
+
+### Project Not Found
+
+1. Verify project is registered: `./scripts/check-secrets.sh`
+2. Check project registry: `aws secretsmanager get-secret-value --secret-id chatops/project-registry`
+3. Ensure project is enabled: Check `enabled: true` in registry
+
+## Scripts
+
+- `scripts/bootstrap.sh` - Automated setup (deploys infrastructure and configures secrets)
+- `scripts/nuke-everything.sh` - Complete teardown (destroys all infrastructure)
+- `scripts/add-project.sh` - Add a project to the registry
+- `scripts/register-project-from-dir.sh` - Auto-register from Terraform directory
+- `scripts/check-secrets.sh` - Verify secrets configuration
+
+## Module Information
+
+This project uses the `terraform-aws-chatops` module:
 
 ```hcl
 module "chatops" {
   source  = "BarryPekerman/chatops/aws"
   version = "0.1.0"
-
-  name_prefix        = "my-chatops"
-  github_owner       = "my-org"
-  github_repo        = "my-repo"
-  github_token       = var.github_token
-  telegram_bot_token = var.telegram_bot_token
-  authorized_chat_id = var.authorized_chat_id
-  s3_bucket_arn      = "arn:aws:s3:::my-terraform-state"
-
-  webhook_lambda_zip_path      = "lambda_function.zip"
-  telegram_lambda_zip_path     = "telegram-bot.zip"
-  ai_processor_lambda_zip_path = "ai-output-processor.zip"  # Required even if AI is disabled
+  # ... configuration
 }
 ```
 
-### With AI Processing
-
-```hcl
-module "chatops" {
-  source  = "BarryPekerman/chatops/aws"
-  version = "0.1.0"
-
-  name_prefix        = "my-chatops"
-  github_owner       = "my-org"
-  github_repo        = "my-repo"
-  github_token       = var.github_token
-  telegram_bot_token = var.telegram_bot_token
-  authorized_chat_id = var.authorized_chat_id
-  s3_bucket_arn      = "arn:aws:s3:::my-terraform-state"
-
-  webhook_lambda_zip_path      = "webhook-handler.zip"
-  telegram_lambda_zip_path     = "telegram-bot.zip"
-  ai_processor_lambda_zip_path = "ai-output-processor.zip"
-
-  # Enable AI processing via AWS Bedrock
-  enable_ai_processing = true
-  ai_model_id          = "anthropic.claude-3-haiku-20240307-v1:0"
-  ai_threshold         = 1000
-  ai_max_tokens        = 1000
-}
-```
-
-## Module Structure
-
-```
-target-module/
-├── main.tf                          # Root module orchestration
-├── variables.tf                     # User-facing inputs
-├── outputs.tf                       # Module outputs
-├── versions.tf                      # Provider requirements
-│
-├── modules/
-│   ├── core/
-│   │   ├── secrets/                 # Centralized secret management
-│   │   └── webhook-handler/         # Main webhook processor (no AI)
-│   ├── cicd/
-│   │   └── github/                  # GitHub OIDC + IAM
-│   └── chat/
-│       └── telegram/                # Telegram bot integration
-│
-├── modules-optional/
-│   └── ai-output-processor/         # Optional AI processing (separate)
-│
-└── examples/
-    ├── basic/                       # Telegram + GitHub (no AI)
-    └── with-ai/                     # Telegram + GitHub + AI processor
-```
-
-## Requirements
-
-| Name | Version |
-|------|---------|
-| terraform | >= 1.0 |
-| aws | ~> 6.0 |
-| random | ~> 3.6 |
-
-## Providers
-
-| Name | Version |
-|------|---------|
-| aws | ~> 6.0 |
-| random | ~> 3.6 |
-
-## Inputs
-
-### Required Variables
-
-| Name                      | Description                             | Type     |
-|---------------------------|-----------------------------------------|----------|
-| name_prefix               | Prefix for resource names               | `string` |
-| github_owner              | GitHub repository owner/organization    | `string` |
-| github_repo               | GitHub repository name                  | `string` |
-| github_token              | GitHub personal access token            | `string` |
-| telegram_bot_token        | Telegram bot token                      | `string` |
-| authorized_chat_id        | Authorized Telegram chat ID             | `string` |
-| s3_bucket_arn             | ARN of S3 bucket for Terraform state    | `string` |
-| webhook_lambda_zip_path   | Path to webhook handler Lambda ZIP file | `string` |
-| telegram_lambda_zip_path  | Path to Telegram bot Lambda ZIP file    | `string` |
-
-### Optional Variables
-
-| Name                     | Description | Type | Default |
-|--------------------------|-------------|------|---------|
-| github_branch            | GitHub branch for OIDC authentication      | `string` | `"main"` |
-| max_message_length       | Maximum message length (simple truncation) | `number` | `3500`   |
-| api_gateway_stage        | API Gateway stage name                     | `string` | `"prod"` |
-| log_retention_days       | CloudWatch log retention in days           | `number` | `7`      |
-| enable_xray_tracing      | Enable X-Ray tracing for API Gateway       | `bool`   | `true`   |
-| rate_limit                | API Gateway rate limit (requests/second)   | `number` | `100`    |
-| burst_limit               | API Gateway burst limit                    | `number` | `200`    |
-| quota_limit               | API Gateway quota limit                    | `number` | `10000`  |
-| quota_period              | API Gateway quota period                   | `string` | `"DAY"`  |
-| webhook_api_key_required | Whether webhook API requires API key       | `bool`   | `false`  |
-| tags                      | Tags to apply to all resources             | `map(string)` | `{"ManagedBy": "terraform", "Project": "chatops"}` |
-
-## Outputs
-
-| Name                       | Description                         |
-|----------------------------|-------------------------------------|
-| secrets_manager_arn        | ARN of the Secrets Manager secret   |
-| secrets_manager_name       | Name of the Secrets Manager secret  |
-| webhook_url                | Webhook API Gateway URL             |
-| webhook_api_key            | Webhook API key (if enabled)        |
-| webhook_function_arn       | ARN of the webhook handler Lambda   |
-| github_role_arn            | ARN of the GitHub Actions IAM role  |
-| github_role_name           | Name of the GitHub Actions IAM role |
-| oidc_provider_arn          | ARN of the GitHub OIDC provider     |
-| telegram_bot_function_arn  | ARN of the Telegram bot Lambda      |
-| telegram_bot_function_name | Name of the Telegram bot Lambda     |
-
-## Platform Support
-
-### Telegram (v0.1.0)
-
-- ✅ Bot integration
-- ✅ Webhook handler
-- ✅ Chat ID authorization
-- ✅ Message truncation
-- ✅ API Gateway integration
-
-## Security Features
-
-- **GitHub OIDC**: No long-lived credentials, federated authentication
-- **Secrets Manager**: Centralized secret storage with automatic rotation support
-- **Least Privilege IAM**: Minimal permissions for each component
-- **API Gateway Security**: Rate limiting, throttling, optional API keys
-- **CloudWatch Logging**: Comprehensive audit trails
-- **X-Ray Tracing**: Request tracing for debugging
-
-## Examples
-
-See the [examples](./examples/) directory for complete usage examples:
-
-- [Basic](./examples/basic/) - Telegram + GitHub (no AI)
-- [With AI](./examples/with-ai/) - Telegram + GitHub + AI processor
-
-## Documentation
-
-For detailed documentation, see the [`docs/`](./docs/) directory:
-
-- **[Project Management](./docs/PROJECT_MANAGEMENT.md)** - Managing multiple Terraform projects, provider requirements, and project registry
-- **[Teardown Guide](./docs/TEARDOWN.md)** - How to safely destroy infrastructure and manage teardowns
-- **[ChatOps Teardown](./docs/TEARDOWN_CHATOPS.md)** - Complete guide to tearing down the ChatOps system itself
-- **[Teardown Methods](./docs/TEARDOWN_METHODS.md)** - Comparison of all teardown methods and what each destroys
-- **[Workflow Strategy](./docs/WORKFLOW_STRATEGY.md)** - CI/CD workflow architecture and flow
-- **[Deployment Guide](./docs/DEPLOYMENT.md)** - Manual deployment procedures
-- **[CI/CD Guide](./docs/CI_CD.md)** - Continuous integration and deployment
-- **[Testing Guide](./docs/TESTING.md)** - Testing strategies and procedures
+See [terraform/README.md](terraform/README.md) for detailed module configuration.
 
 ## License
 
